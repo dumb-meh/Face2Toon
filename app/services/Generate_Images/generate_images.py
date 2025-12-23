@@ -12,8 +12,9 @@ load_dotenv()
 
 class GenerateImages:
     def __init__(self):
-        self.seedream_api_key = os.getenv("SEEDREAM_API_KEY")
-        self.seedream_url = os.getenv("SEEDREAM_API_URL", "https://api.seedream.ai/generate")
+        self.api_key = os.getenv("ARK_API_KEY")
+        self.model = "seedream-4-0-250828"
+        self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
         self.max_connections_for_parallel = 2  # If more connections than this, ignore them for parallel processing
 
     def generate_first_two_page(
@@ -118,7 +119,7 @@ class GenerateImages:
                         image_urls[page_key] = image_url
                     except Exception as e:
                         print(f"Error generating image for {page_key}: {str(e)}")
-                        image_urls[page_key] = None
+                        raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
         
         return image_urls
     
@@ -130,33 +131,44 @@ class GenerateImages:
     ) -> str:
         """Generate a single image using SeeDream API"""
         try:
-            # Prepare files and data for SeeDream API
-            files = {
-                'reference_image': ('reference.jpg', reference_image_bytes, 'image/jpeg')
+            # Prepare headers
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json'
             }
             
-            data = {
+            # Encode reference image to base64
+            import base64
+            reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
+            
+            # Prepare payload
+            payload = {
+                'model': self.model,
                 'prompt': prompt,
-                'api_key': self.seedream_api_key
+                'reference_image': reference_image_base64,
+                'size': '1024x1024'
             }
             
             # If there's a reference page image, include it
             if reference_page_image:
-                data['reference_page_url'] = reference_page_image
+                payload['reference_page_url'] = reference_page_image
             
             # Call SeeDream API
             response = requests.post(
-                self.seedream_url,
-                files=files,
-                data=data,
-                timeout=60
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=120
             )
             
             response.raise_for_status()
             result = response.json()
             
-            # Extract image URL from response (adjust based on actual SeeDream API response format)
-            image_url = result.get('image_url') or result.get('url') or result.get('output_url')
+            # Extract image URL from response (adjust based on actual API response format)
+            image_url = result.get('data', [{}])[0].get('url') or result.get('image_url') or result.get('url')
+            
+            if not image_url:
+                raise Exception(f"No image URL in response: {result}")
             
             return image_url
             
