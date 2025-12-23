@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.Generate_Story.generate_story_route import router as generate_story_router
-
+from app.services.Generate_Images.generate_images_route import router as generate_images_router
 import os
 from dotenv import load_dotenv
 
@@ -33,7 +33,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(generate_story_router, prefix="/api/v1")
-
+app.include_router(generate_images_router, prefix="/api/v1")
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
