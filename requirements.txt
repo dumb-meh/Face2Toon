@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+python-dotenv
+requests
+pillow
+aiofiles
+byteplus-sdk
+openai
