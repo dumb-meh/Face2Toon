@@ -11,7 +11,11 @@ generate_images_service = GenerateImages()
 async def generate_first_two_page(
     reference_image: UploadFile = File(..., description="Reference image of the child"),
     prompt: str = Form(..., description="JSON string of prompts for each page"),
-    page_connections: Optional[str] = Form(default=None, description="JSON string of page connections")
+    page_connections: Optional[str] = Form(default=None, description="JSON string of page connections"),
+    gender: str = Form(..., description="Child's gender"),
+    age: int = Form(..., description="Child's age"),
+    image_style: str = Form(..., description="Desired illustration style"),
+    sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior")
 ):
     """Generate images for page 0 (cover) and page 1 only"""
     try:
@@ -21,7 +25,11 @@ async def generate_first_two_page(
         response = generate_images_service.generate_first_two_page(
             prompt_dict,
             page_connections_dict,
-            reference_image
+            reference_image,
+            gender,
+            age,
+            image_style,
+            sequential
         )
         return response
     except Exception as e:
@@ -32,7 +40,11 @@ async def generate_images(
     reference_image: UploadFile = File(..., description="Reference image of the child"),
     prompt: str = Form(..., description="JSON string of prompts for each page"),
     page_connections: Optional[str] = Form(default=None, description="JSON string of page connections"),
-    coverpage: str = Query(default="no", description="'yes' if cover and page 1 already exist, 'no' to generate all pages")
+    gender: str = Form(..., description="Child's gender"),
+    age: int = Form(..., description="Child's age"),
+    image_style: str = Form(..., description="Desired illustration style"),
+    coverpage: str = Query(default="no", description="'yes' if cover and page 1 already exist, 'no' to generate all pages"),
+    sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior")
 ):
     """Generate images for all pages. Set coverpage='yes' to skip page 0 and page 1."""
     try:
@@ -43,7 +55,11 @@ async def generate_images(
             prompt_dict,
             page_connections_dict,
             reference_image,
-            coverpage=coverpage
+            gender,
+            age,
+            image_style,
+            coverpage=coverpage,
+            sequential=sequential
         )
         return response
     except Exception as e:

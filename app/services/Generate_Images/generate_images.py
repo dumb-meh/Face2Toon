@@ -21,17 +21,28 @@ class GenerateImages:
         self,
         prompts: Dict[str, str],
         page_connections: Optional[Dict[str, str]],
-        reference_image: UploadFile
+        reference_image: UploadFile,
+        gender: str,
+        age: int,
+        image_style: str,
+        sequential: str = "no"
     ) -> GenerateImageResponse:
         """Generate images for page 0 (cover) and page 1 only"""
         # Filter to only page 0 and page 1
         pages_to_generate = {k: v for k, v in prompts.items() if k in ['page 0', 'page 1']}
         
+        # Force sequential if requested
+        force_sequential = sequential.lower() == "yes"
+        
         image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
-            page_connections=None,  # No connections for first two pages
-            generated_images={}
+            page_connections=page_connections if force_sequential else None,
+            generated_images={},
+            gender=gender,
+            age=age,
+            image_style=image_style,
+            force_sequential=force_sequential
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -41,7 +52,11 @@ class GenerateImages:
         prompts: Dict[str, str],
         page_connections: Optional[Dict[str, str]],
         reference_image: UploadFile,
-        coverpage: str = "no"
+        gender: str,
+        age: int,
+        image_style: str,
+        coverpage: str = "no",
+        sequential: str = "no"
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
         # Determine which pages to generate
@@ -52,17 +67,26 @@ class GenerateImages:
             # Generate all pages
             pages_to_generate = prompts
         
-        # Decide whether to use page connections based on complexity
-        # If too many connections, ignore them for parallel processing
+        # Check if sequential generation is forced
+        force_sequential = sequential.lower() == "yes"
+        
+        # Decide whether to use page connections based on complexity or force sequential
         use_connections = False
-        if page_connections and len(page_connections) <= self.max_connections_for_parallel:
+        if force_sequential:
+            # Always use sequential with connections
+            use_connections = True
+        elif page_connections and len(page_connections) <= self.max_connections_for_parallel:
             use_connections = True
         
         image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
             page_connections if use_connections else None,
-            generated_images={}
+            generated_images={},
+            gender=gender,
+            age=age,
+            image_style=image_style,
+            force_sequential=force_sequential
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -72,7 +96,11 @@ class GenerateImages:
         pages: Dict[str, str],
         reference_image: UploadFile,
         page_connections: Optional[Dict[str, str]],
-        generated_images: Dict[str, str]
+        generated_images: Dict[str, str],
+        gender: str,
+        age: int,
+        image_style: str,
+        force_sequential: bool = False
     ) -> Dict[str, str]:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
@@ -81,20 +109,31 @@ class GenerateImages:
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
         
-        if page_connections:
-            # Sequential generation for pages with connections
+        if page_connections or force_sequential:
+            # Sequential generation for pages with connections or when forced
             sorted_pages = sorted(pages.items(), key=lambda x: int(x[0].split()[1]))
             
             for page_key, prompt in sorted_pages:
                 reference_page = None
-                if page_key in page_connections:
+                
+                # If force_sequential, use previous page as reference (except for page 0)
+                if force_sequential and page_key != "page 0":
+                    page_num = int(page_key.split()[1])
+                    prev_page_key = f"page {page_num - 1}"
+                    reference_page = generated_images.get(prev_page_key)
+                # Otherwise check page_connections
+                elif page_connections and page_key in page_connections:
                     ref_page_key = page_connections[page_key]
                     reference_page = generated_images.get(ref_page_key)
                 
                 image_url = self._generate_single_image(
                     prompt,
                     reference_image_bytes,
-                    reference_page
+                    reference_page,
+                    gender,
+                    age,
+                    image_style,
+                    page_key
                 )
                 
                 image_urls[page_key] = image_url
@@ -107,7 +146,11 @@ class GenerateImages:
                         self._generate_single_image,
                         prompt,
                         reference_image_bytes,
-                        None
+                        None,
+                        gender,
+                        age,
+                        image_style,
+                        page_key
                     ): page_key
                     for page_key, prompt in pages.items()
                 }
@@ -127,10 +170,36 @@ class GenerateImages:
         self,
         prompt: str,
         reference_image_bytes: bytes,
-        reference_page_image: Optional[str] = None
+        reference_page_image: Optional[str],
+        gender: str,
+        age: int,
+        image_style: str,
+        page_key: str
     ) -> str:
         """Generate a single image using SeeDream API"""
         try:
+            # Enhance the prompt with detailed style and character instructions
+            if page_key == "page 0":
+                # Cover page - include title rendering
+                enhanced_prompt = f"""
+Children's storybook cover illustration in {image_style} style.
+Main character: {age}-year-old {gender} child matching the reference image exactly.
+{prompt}
+Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
+The child's face, features, hair, and appearance must exactly match the reference image provided.
+Composition suitable for a book cover with space for title text.
+""".strip()
+            else:
+                # Story pages
+                enhanced_prompt = f"""
+Children's storybook illustration in {image_style} style.
+Main character: {age}-year-old {gender} child from the reference image.
+{prompt}
+Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
+The child's appearance (face, features, hair, skin tone) must exactly match the reference image provided.
+Focus on: the scene, actions, setting, clothing, background, and other characters while maintaining the child's exact appearance from reference.
+""".strip()
+            
             # Prepare headers
             headers = {
                 'Authorization': f'Bearer {self.api_key}',
@@ -144,7 +213,7 @@ class GenerateImages:
             # Prepare payload
             payload = {
                 'model': self.model,
-                'prompt': prompt,
+                'prompt': enhanced_prompt,
                 'reference_image': reference_image_base64,
                 'size': '1024x1024'
             }
