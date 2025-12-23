@@ -45,8 +45,12 @@ Return a JSON object with three fields:
 2. "prompt": A dictionary with keys "page 0" through "page 10"
    - Each value is a detailed image generation prompt for that page
    - IMPORTANT: ALL prompts must be written in ENGLISH (regardless of story language)
+   - IMPORTANT: A reference image of the child will be provided to the image generator
+   - For "page 0" (cover): Include the story title in the prompt and describe a cover scene featuring the child
+   - For "page 1" to "page 10": Start each prompt mentioning the child from the reference image (e.g., "The child from the reference image...")
+   - Do NOT describe the child's physical features (face, hair, skin tone) as these come from the reference image
+   - Focus on: clothing, pose, actions, setting, background, mood, other characters, and scene details
    - Style: {input_data['image_style']}
-   - Prompts should describe the scene, characters, setting, mood, and visual elements
    - Maintain character consistency across pages
    - Each prompt should be 2-3 sentences in English
 
