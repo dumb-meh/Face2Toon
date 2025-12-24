@@ -27,7 +27,9 @@ class GenerateImages:
         image_style: str,
         sequential: str = "no"
     ) -> GenerateImageResponse:
-        """Generate images for page 0 (cover) and page 1 only"""
+        \"\"\"Generate images for page 0 (cover) and page 1 only\"\"\"
+        print(f"DEBUG generate_first_two_page: prompts type={type(prompts)}, page_connections type={type(page_connections)}")
+        
         # Filter to only page 0 and page 1
         pages_to_generate = {k: v for k, v in prompts.items() if k in ['page 0', 'page 1']}
         
@@ -57,7 +59,7 @@ class GenerateImages:
         image_style: str,
         coverpage: str = "no",
         sequential: str = "no",
-        existing_pages: Dict[str, str] = None
+        existing_pages: Optional[Dict[str, str]] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
         # Determine which pages to generate

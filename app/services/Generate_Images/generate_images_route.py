@@ -22,6 +22,9 @@ async def generate_first_two_page(
         prompt_dict = json.loads(prompt)
         page_connections_dict = json.loads(page_connections) if page_connections else None
         
+        print(f"DEBUG: prompt_dict type: {type(prompt_dict)}, value: {prompt_dict}")
+        print(f"DEBUG: page_connections_dict type: {type(page_connections_dict)}, value: {page_connections_dict}")
+        
         response = generate_images_service.generate_first_two_page(
             prompt_dict,
             page_connections_dict,
@@ -33,6 +36,7 @@ async def generate_first_two_page(
         )
         return response
     except Exception as e:
+        print(f"ERROR in route: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
 @router.post("/generate_images_full", response_model=GenerateImageResponse)
@@ -51,7 +55,7 @@ async def generate_images(
     try:
         prompt_dict = json.loads(prompt)
         page_connections_dict = json.loads(page_connections) if page_connections else None
-        existing_pages_dict = json.loads(existing_pages) if existing_pages else {}
+        existing_pages_dict = json.loads(existing_pages) if existing_pages else None
         
         response = generate_images_service.generate_images(
             prompt_dict,
