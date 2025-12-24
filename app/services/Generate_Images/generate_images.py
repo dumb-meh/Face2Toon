@@ -107,8 +107,8 @@ class GenerateImages:
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
         
-        if page_connections or force_sequential:
-            # Sequential generation for pages with connections or when forced
+        if force_sequential:
+            # Sequential generation when forced
             sorted_pages = sorted(pages.items(), key=lambda x: int(x[0].split()[1]))
             
             for page_key, prompt in sorted_pages:
