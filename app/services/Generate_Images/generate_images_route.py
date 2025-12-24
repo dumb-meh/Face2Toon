@@ -44,12 +44,14 @@ async def generate_images(
     age: int = Form(..., description="Child's age"),
     image_style: str = Form(..., description="Desired illustration style"),
     coverpage: str = Query(default="no", description="'yes' if cover and page 1 already exist, 'no' to generate all pages"),
-    sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior")
+    sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior"),
+    existing_pages: Optional[str] = Form(default=None, description="JSON string of already generated page URLs (e.g., {'page 0': 'url', 'page 1': 'url'})")
 ):
     """Generate images for all pages. Set coverpage='yes' to skip page 0 and page 1."""
     try:
         prompt_dict = json.loads(prompt)
         page_connections_dict = json.loads(page_connections) if page_connections else None
+        existing_pages_dict = json.loads(existing_pages) if existing_pages else {}
         
         response = generate_images_service.generate_images(
             prompt_dict,
@@ -59,7 +61,8 @@ async def generate_images(
             age,
             image_style,
             coverpage=coverpage,
-            sequential=sequential
+            sequential=sequential,
+            existing_pages=existing_pages_dict
         )
         return response
     except Exception as e:

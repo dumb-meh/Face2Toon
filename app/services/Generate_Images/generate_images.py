@@ -15,7 +15,7 @@ class GenerateImages:
         self.api_key = os.getenv("ARK_API_KEY")
         self.model = "seedream-4-0-250828"
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
-        self.max_connections_for_parallel = 2  # If more connections than this, ignore them for parallel processing
+        self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
 
     def generate_first_two_page(
         self,
@@ -56,7 +56,8 @@ class GenerateImages:
         age: int,
         image_style: str,
         coverpage: str = "no",
-        sequential: str = "no"
+        sequential: str = "no",
+        existing_pages: Dict[str, str] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
         # Determine which pages to generate
@@ -70,19 +71,16 @@ class GenerateImages:
         # Check if sequential generation is forced
         force_sequential = sequential.lower() == "yes"
         
-        # Decide whether to use page connections based on complexity or force sequential
-        use_connections = False
-        if force_sequential:
-            # Always use sequential with connections
-            use_connections = True
-        elif page_connections and len(page_connections) <= self.max_connections_for_parallel:
-            use_connections = True
+        # Use existing pages if provided, otherwise start with empty dict
+        initial_generated_images = existing_pages if existing_pages else {}
         
+        # For parallel mode, ignore page_connections completely
+        # For sequential mode, use page_connections
         image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
-            page_connections if use_connections else None,
-            generated_images={},
+            page_connections if force_sequential else None,
+            generated_images=initial_generated_images,
             gender=gender,
             age=age,
             image_style=image_style,
@@ -105,7 +103,7 @@ class GenerateImages:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
         
-        # Read reference image (only used for page 0)
+        # Read reference image
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
         
@@ -137,6 +135,11 @@ class GenerateImages:
                     # Don't use raw image for pages after page 0
                     use_raw_image = False
                 
+                # Debug logging
+                print(f"Generating {page_key}:")
+                print(f"  - Using raw image: {use_raw_image}")
+                print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
+                
                 image_url = self._generate_single_image(
                     prompt,
                     reference_image_bytes if use_raw_image else None,
@@ -149,15 +152,24 @@ class GenerateImages:
                 
                 image_urls[page_key] = image_url
                 generated_images[page_key] = image_url
+                print(f"  - Generated URL: {image_url}")
+            
+            # Clear generated_images dict to free memory after sequential generation
+            generated_images.clear()
+            print("Cleared generated_images cache after sequential generation")
         else:
-            # Parallel generation when no connections
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            # Parallel generation - all pages use the reference image
+            # Generate 5 images at once to optimize performance
+            print(f"Parallel generation mode: Generating {len(pages)} pages in batches of {self.parallel_batch_size}\"")
+            print(f"All pages will use the reference image, ignoring any page connections")
+            
+            with ThreadPoolExecutor(max_workers=self.parallel_batch_size) as executor:
                 futures = {
                     executor.submit(
                         self._generate_single_image,
                         prompt,
-                        reference_image_bytes,
-                        None,
+                        reference_image_bytes,  # All pages get reference image in parallel mode
+                        None,  # No previous page reference in parallel mode
                         gender,
                         age,
                         image_style,
@@ -171,6 +183,7 @@ class GenerateImages:
                     try:
                         image_url = future.result()
                         image_urls[page_key] = image_url
+                        print(f"  - {page_key}: Generated successfully")
                     except Exception as e:
                         print(f"Error generating image for {page_key}: {str(e)}")
                         raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
