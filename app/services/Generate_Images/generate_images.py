@@ -27,7 +27,7 @@ class GenerateImages:
         image_style: str,
         sequential: str = "no"
     ) -> GenerateImageResponse:
-        \"\"\"Generate images for page 0 (cover) and page 1 only\"\"\"
+        """Generate images for page 0 (cover) and page 1 only"""
         print(f"DEBUG generate_first_two_page: prompts type={type(prompts)}, page_connections type={type(page_connections)}")
         
         # Filter to only page 0 and page 1
