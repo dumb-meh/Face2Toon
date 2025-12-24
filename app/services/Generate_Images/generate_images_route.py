@@ -60,7 +60,7 @@ async def generate_images(
     image_style: str = Form(..., description="Desired illustration style"),
     coverpage: str = Query(default="no", description="'yes' if cover and page 1 already exist, 'no' to generate all pages"),
     sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior"),
-    existing_pages: Optional[str] = Form(default=None, description="JSON string of already generated page URLs (e.g., {'page 0': 'url', 'page 1': 'url'})")
+    page_1_image: Optional[UploadFile] = File(default=None, description="Generated image for page 1 (required when coverpage='yes')")
 ):
     """Generate images for all pages. Set coverpage='yes' to skip page 0 and page 1."""
     try:
@@ -73,11 +73,6 @@ async def generate_images(
         if page_connections_dict:
             while isinstance(page_connections_dict, str):
                 page_connections_dict = json.loads(page_connections_dict)
-                
-        existing_pages_dict = existing_pages
-        if existing_pages_dict:
-            while isinstance(existing_pages_dict, str):
-                existing_pages_dict = json.loads(existing_pages_dict)
         
         response = generate_images_service.generate_images(
             prompt_dict,
@@ -88,7 +83,7 @@ async def generate_images(
             image_style,
             coverpage=coverpage,
             sequential=sequential,
-            existing_pages=existing_pages_dict
+            page_1_image=page_1_image
         )
         return response
     except Exception as e:

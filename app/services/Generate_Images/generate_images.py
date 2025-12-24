@@ -59,7 +59,7 @@ class GenerateImages:
         image_style: str,
         coverpage: str = "no",
         sequential: str = "no",
-        existing_pages: Optional[Dict[str, str]] = None
+        page_1_image: Optional[UploadFile] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
         # Determine which pages to generate
@@ -73,20 +73,17 @@ class GenerateImages:
         # Check if sequential generation is forced
         force_sequential = sequential.lower() == "yes"
         
-        # Use existing pages if provided, otherwise start with empty dict
-        initial_generated_images = existing_pages if existing_pages else {}
-        
         # For parallel mode, ignore page_connections completely
         # For sequential mode, use page_connections
         image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
             page_connections if force_sequential else None,
-            generated_images=initial_generated_images,
             gender=gender,
             age=age,
             image_style=image_style,
-            force_sequential=force_sequential
+            force_sequential=force_sequential,
+            page_1_image=page_1_image
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -96,18 +93,25 @@ class GenerateImages:
         pages: Dict[str, str],
         reference_image: UploadFile,
         page_connections: Optional[Dict[str, str]],
-        generated_images: Dict[str, str],
         gender: str,
         age: int,
         image_style: str,
-        force_sequential: bool = False
+        force_sequential: bool = False,
+        page_1_image: Optional[UploadFile] = None
     ) -> Dict[str, str]:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
+        generated_images = {}
         
         # Read reference image
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
+        
+        # If page_1_image is provided, save it for sequential generation starting from page 2
+        page_1_bytes = None
+        if page_1_image:
+            page_1_bytes = page_1_image.file.read()
+            page_1_image.file.seek(0)
         
         if force_sequential:
             # Sequential generation when forced
@@ -116,6 +120,7 @@ class GenerateImages:
             for page_key, prompt in sorted_pages:
                 reference_page = None
                 use_raw_image = False
+                use_page_1_image = False
                 
                 if page_key == "page 0":
                     # Only page 0 uses the raw reference image
@@ -125,13 +130,16 @@ class GenerateImages:
                     page_num = int(page_key.split()[1])
                     prev_page_key = f"page {page_num - 1}"
                     
+                    # Special case: page 2 should use page 1 image if provided
+                    if page_key == "page 2" and page_1_bytes:
+                        use_page_1_image = True
                     # Check if there's a specific page connection
-                    if page_connections and page_key in page_connections:
+                    elif page_connections and page_key in page_connections:
                         ref_page_key = page_connections[page_key]
                         reference_page = generated_images.get(ref_page_key)
                     
                     # If no specific connection, always use previous page for style consistency
-                    if not reference_page:
+                    if not reference_page and not use_page_1_image:
                         reference_page = generated_images.get(prev_page_key)
                     
                     # Don't use raw image for pages after page 0
@@ -140,11 +148,12 @@ class GenerateImages:
                 # Debug logging
                 print(f"Generating {page_key}:")
                 print(f"  - Using raw image: {use_raw_image}")
+                print(f"  - Using page 1 image: {use_page_1_image}")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 
                 image_url = self._generate_single_image(
                     prompt,
-                    reference_image_bytes if use_raw_image else None,
+                    reference_image_bytes if use_raw_image else (page_1_bytes if use_page_1_image else None),
                     reference_page,
                     gender,
                     age,
