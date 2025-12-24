@@ -105,7 +105,7 @@ class GenerateImages:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
         
-        # Read reference image
+        # Read reference image (only used for page 0)
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
         
@@ -115,20 +115,31 @@ class GenerateImages:
             
             for page_key, prompt in sorted_pages:
                 reference_page = None
+                use_raw_image = False
                 
-                # If force_sequential, use previous page as reference (except for page 0)
-                if force_sequential and page_key != "page 0":
+                if page_key == "page 0":
+                    # Only page 0 uses the raw reference image
+                    use_raw_image = True
+                else:
+                    # For all other pages in sequential mode
                     page_num = int(page_key.split()[1])
                     prev_page_key = f"page {page_num - 1}"
-                    reference_page = generated_images.get(prev_page_key)
-                # Otherwise check page_connections
-                elif page_connections and page_key in page_connections:
-                    ref_page_key = page_connections[page_key]
-                    reference_page = generated_images.get(ref_page_key)
+                    
+                    # Check if there's a specific page connection
+                    if page_connections and page_key in page_connections:
+                        ref_page_key = page_connections[page_key]
+                        reference_page = generated_images.get(ref_page_key)
+                    
+                    # If no specific connection, always use previous page for style consistency
+                    if not reference_page:
+                        reference_page = generated_images.get(prev_page_key)
+                    
+                    # Don't use raw image for pages after page 0
+                    use_raw_image = False
                 
                 image_url = self._generate_single_image(
                     prompt,
-                    reference_image_bytes,
+                    reference_image_bytes if use_raw_image else None,
                     reference_page,
                     gender,
                     age,
@@ -169,7 +180,7 @@ class GenerateImages:
     def _generate_single_image(
         self,
         prompt: str,
-        reference_image_bytes: bytes,
+        reference_image_bytes: Optional[bytes],
         reference_page_image: Optional[str],
         gender: str,
         age: int,
@@ -180,24 +191,26 @@ class GenerateImages:
         try:
             # Enhance the prompt with detailed style and character instructions
             if page_key == "page 0":
-                # Cover page - include title rendering
+                # Cover page - uses the original uploaded reference image
                 enhanced_prompt = f"""
 Children's storybook cover illustration in {image_style} style.
 Main character: {age}-year-old {gender} child matching the reference image exactly.
 {prompt}
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
-The child's face, features, hair, and appearance must exactly match the reference image provided.
+IMPORTANT: The child's face, facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone must EXACTLY match the reference image. Do not alter or reinterpret any facial characteristics.
 Composition suitable for a book cover with space for title text.
+Negative prompt: Do not change face structure, facial proportions, eyebrow shape, eye color, hair style, or skin tone. No artistic reinterpretation of facial features.
 """.strip()
             else:
-                # Story pages
+                # Story pages - maintain consistency from previous page's generated image
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
-Main character: {age}-year-old {gender} child from the reference image.
+Main character: {age}-year-old {gender} child continuing from the previous page.
 {prompt}
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
-The child's appearance (face, features, hair, skin tone) must exactly match the reference image provided.
-Focus on: the scene, actions, setting, clothing, background, and other characters while maintaining the child's exact appearance from reference.
+CRITICAL: Maintain EXACT character appearance from the style reference - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. If clothing colors or patterns are specified in the prompt, follow them precisely without variation.
+Focus on: implementing the exact scene, actions, setting, and clothing details as described while preserving all character appearance characteristics.
+Negative prompt: No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance.
 """.strip()
             
             # Prepare headers
@@ -206,21 +219,23 @@ Focus on: the scene, actions, setting, clothing, background, and other character
                 'Content-Type': 'application/json'
             }
             
-            # Encode reference image to base64
-            import base64
-            reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
-            
             # Prepare payload
             payload = {
                 'model': self.model,
                 'prompt': enhanced_prompt,
-                'reference_image': reference_image_base64,
                 'size': '1024x1024'
             }
             
-            # If there's a reference page image, include it
+            # Add reference image only if provided (page 0 only in sequential mode)
+            if reference_image_bytes:
+                import base64
+                reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
+                payload['reference_image'] = reference_image_base64
+            
+            # If there's a reference page image (for sequential generation), include it as style reference
+            # This ensures the model uses the previous page's character appearance and style
             if reference_page_image:
-                payload['reference_page_url'] = reference_page_image
+                payload['style_reference_url'] = reference_page_image
             
             # Call SeeDream API
             response = requests.post(
