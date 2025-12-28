@@ -85,9 +85,13 @@ class GenerateImages:
             pages_to_generate = {k: v for k, v in prompts.items() if k not in ['page 0', 'page 1']}
             story_to_generate = {k: v for k, v in story.items() if k not in ['page 0', 'page 1']} if story else {}
         else:
-            # Generate all pages
-            pages_to_generate = prompts
-            story_to_generate = story if story else {}
+            # Generate all pages, but if page_1_url is provided, skip page 1 since it's already available
+            if page_1_url:
+                pages_to_generate = {k: v for k, v in prompts.items() if k != 'page 1'}
+                story_to_generate = {k: v for k, v in story.items() if k != 'page 1'} if story else {}
+            else:
+                pages_to_generate = prompts
+                story_to_generate = story if story else {}
         
         # Check if sequential generation is forced
         force_sequential = sequential.lower() == "yes"
@@ -129,7 +133,11 @@ class GenerateImages:
         generated_images = {}  # Initialize for sequential generation
         generated_images_bytes = {}  # Store bytes for direct use
         story = story or {}
-        page_counter = 1  # Start from image 1 (page 0 is cover)
+        
+        # Determine starting page counter based on whether page_1_url is provided
+        # If page_1_url is provided and will be split into pages 1-2, next generated image starts at image 1 (pages 3-4)
+        # If no page_1_url, first generated image is image 0 for page 0, or image 1 for pages 1-2 (if skipping cover)
+        page_counter_start = 0
         
         # Read reference image
         reference_image_bytes = reference_image.file.read()
@@ -177,11 +185,13 @@ class GenerateImages:
                     print(f"  - page 1: {image_urls['page 1']}")
                     print(f"  - page 2: {image_urls['page 2']}")
                     
-                    page_counter = 1  # Next generated image will be image 1 (pages 3-4)
+                    page_counter_start = 1  # Next generated image will be image 1 (pages 3-4)
                 else:
                     print(f"Warning: Page 1 image not found at: {file_path}")
             except Exception as e:
                 print(f"Error loading/splitting page 1 image: {str(e)}")
+        
+        page_counter = page_counter_start
         
         if force_sequential:
             # Sequential generation when forced
@@ -192,9 +202,12 @@ class GenerateImages:
                 reference_page_bytes = None
                 use_raw_image = False
                 
+                # Special handling for page 0 (cover)
                 if page_key == "page 0":
                     # Only page 0 uses the raw reference image
                     use_raw_image = True
+                    # Page 0 always gets page_number=0 and should NEVER be split
+                    current_page_number = 0
                 else:
                     # For all other pages in sequential mode
                     page_num = int(page_key.split()[1])
@@ -216,12 +229,15 @@ class GenerateImages:
                     
                     # Don't use raw image for pages after page 0
                     use_raw_image = False
+                    # Use page_counter for non-cover pages
+                    current_page_number = page_counter
                 
                 # Debug logging
                 print(f"Generating {page_key}:")
                 print(f"  - Using raw image: {use_raw_image}")
                 print(f"  - Reference page bytes: {len(reference_page_bytes) if reference_page_bytes else 0} bytes")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
+                print(f"  - Page number for splitting: {current_page_number}")
                 
                 image_urls_dict = self._generate_single_image(
                     prompt,
@@ -235,23 +251,27 @@ class GenerateImages:
                     session_id,
                     reference_page_bytes=reference_page_bytes,
                     should_split=should_split,
-                    page_number=page_counter
+                    page_number=current_page_number
                 )
                 
                 # Store full URL for AI reference in next pages
                 generated_images[page_key] = image_urls_dict['full']
                 print(f"  - Generated full URL: {image_urls_dict['full']}")
                 
-                # Add split page URLs to response if splitting is enabled
-                if should_split:
+                # Add URLs to response based on whether page is split
+                if should_split and page_key != 'page 0':
+                    # Split pages (except cover) - add individual page URLs
                     for key, url in image_urls_dict.items():
                         if key != 'full':
                             image_urls[key] = url
                             print(f"  - {key}: {url}")
                     page_counter += 1  # Increment for next image
                 else:
-                    # No splitting, just return full URL
+                    # No splitting OR cover page - return full URL with original key
                     image_urls[page_key] = image_urls_dict['full']
+                    # Only increment page_counter if this is NOT page 0
+                    if page_key != 'page 0':
+                        page_counter += 1
             
             # Clear generated_images dict to free memory after sequential generation
             generated_images.clear()
@@ -266,6 +286,15 @@ class GenerateImages:
                 futures = {}
                 current_page_counter = page_counter
                 for page_key, prompt in pages.items():
+                    # Determine page_number for splitting calculation
+                    # Page 0 (cover) always uses 0 but won't be split
+                    # First splittable page (page 1) should use 0 to become pages 1-2
+                    if page_key == 'page 0':
+                        page_num_for_split = 0
+                    else:
+                        page_num_for_split = current_page_counter
+                        current_page_counter += 1
+                    
                     future = executor.submit(
                         self._generate_single_image,
                         prompt,
@@ -278,29 +307,35 @@ class GenerateImages:
                         story.get(page_key),
                         session_id,
                         should_split=should_split,
-                        page_number=current_page_counter
+                        page_number=page_num_for_split
                     )
                     futures[future] = page_key
-                    current_page_counter += 1
                 
                 for future in futures:
                     page_key = futures[future]
                     try:
                         image_urls_dict = future.result()
                         
-                        # Add split page URLs to response if splitting is enabled
-                        if should_split:
+                        # Check if this page was actually split (has keys other than 'full')
+                        has_split_pages = any(key != 'full' for key in image_urls_dict.keys())
+                        
+                        if has_split_pages:
+                            # Page was split - add split page URLs
                             for key, url in image_urls_dict.items():
                                 if key != 'full':
                                     image_urls[key] = url
                                     print(f"  - {key}: {url}")
                         else:
-                            # No splitting, just return full URL
+                            # Page was not split (page 0 or splitting disabled) - return full URL
                             image_urls[page_key] = image_urls_dict['full']
                             print(f"  - {page_key}: {image_urls_dict['full']}")
                     except Exception as e:
                         print(f"Error generating image for {page_key}: {str(e)}")
                         raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
+        
+        print(f"\nFinal image_urls dictionary contains {len(image_urls)} pages:")
+        for key in sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if x.split()[1].isdigit() else 0):
+            print(f"  - {key}")
         
         return image_urls
     
@@ -441,7 +476,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
     
     def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str, should_split: bool = False, page_number: int = None) -> Dict[str, str]:
         """Download image and resize to exact physical dimensions: 17" width x 8.5" height at 300 DPI
-        If should_split=True, split the image in the middle and save both halves as separate pages"""
+        If should_split=True and page_key != 'page 0', split the image in the middle and save both halves as separate pages"""
         try:
             # Download the image from Seedream
             response = requests.get(image_url, timeout=60)
@@ -481,8 +516,8 @@ Negative prompt: No changes to the character's face structure, facial proportion
             base_url = base_url.rstrip('/')
             full_image_url = f"{base_url}/{full_image_filename}"
             
-            # If splitting is disabled, return only the full image URL
-            if not should_split:
+            # NEVER split cover page (page 0), or if splitting is disabled
+            if not should_split or page_key == 'page 0':
                 return {'full': full_image_url}
             
             # Split the image in the middle for book pages
