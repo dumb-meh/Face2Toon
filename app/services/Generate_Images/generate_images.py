@@ -11,6 +11,8 @@ from PIL import Image
 import io
 import base64
 from urllib.parse import urljoin
+import uuid
+from datetime import datetime
 
 load_dotenv()
 
@@ -35,6 +37,9 @@ class GenerateImages:
         """Generate images for page 0 (cover) and page 1 only"""
         print(f"DEBUG generate_first_two_page: prompts type={type(prompts)}, page_connections type={type(page_connections)}")
         
+        # Generate unique session ID for this request
+        session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        
         # Filter to only page 0 and page 1
         pages_to_generate = {k: v for k, v in prompts.items() if k in ['page 0', 'page 1']}
         story_to_generate = {k: v for k, v in story.items() if k in ['page 0', 'page 1']} if story else {}
@@ -46,12 +51,12 @@ class GenerateImages:
             pages_to_generate,
             reference_image,
             page_connections=page_connections if force_sequential else None,
-            generated_images={},
             gender=gender,
             age=age,
             image_style=image_style,
             force_sequential=force_sequential,
-            story=story_to_generate
+            story=story_to_generate,
+            session_id=session_id
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -69,6 +74,9 @@ class GenerateImages:
         story: Optional[Dict[str, str]] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
+        # Generate unique session ID for this request
+        session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        
         # Determine which pages to generate
         if coverpage.lower() == "yes":
             # Skip page 0 and page 1, generate pages 2-10
@@ -92,7 +100,8 @@ class GenerateImages:
             age=age,
             image_style=image_style,
             force_sequential=force_sequential,
-            story=story_to_generate
+            story=story_to_generate,
+            session_id=session_id
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -106,7 +115,8 @@ class GenerateImages:
         age: int,
         image_style: str,
         force_sequential: bool = False,
-        story: Optional[Dict[str, str]] = None
+        story: Optional[Dict[str, str]] = None,
+        session_id: str = None
     ) -> Dict[str, str]:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
@@ -158,7 +168,8 @@ class GenerateImages:
                     age,
                     image_style,
                     page_key,
-                    story.get(page_key)
+                    story.get(page_key),
+                    session_id
                 )
                 
                 image_urls[page_key] = image_url
@@ -185,7 +196,8 @@ class GenerateImages:
                         age,
                         image_style,
                         page_key,
-                        story.get(page_key)
+                        story.get(page_key),
+                        session_id
                     ): page_key
                     for page_key, prompt in pages.items()
                 }
@@ -211,7 +223,8 @@ class GenerateImages:
         age: int,
         image_style: str,
         page_key: str,
-        story_text: Optional[str] = None
+        story_text: Optional[str] = None,
+        session_id: str = None
     ) -> str:
         """Generate a single image using SeeDream API"""
         try:
@@ -251,14 +264,18 @@ The ENTIRE text MUST be visible and readable in the image.
 FULL TEXT TO RENDER (COMPLETE, NO TRUNCATION):
 "{story_text}"
 
-TEXT PLACEMENT INSTRUCTIONS:
-- Place the text in a text box or banner area within the illustration
-- Use a clear, legible font size that fits the entire text
-- Position the text at the top or bottom of the image where it won't be cut off
-- Ensure ALL words from the beginning to the end are fully visible
+TEXT PLACEMENT INSTRUCTIONS - DOUBLE PAGE SPREAD:
+IMPORTANT: This image is for a double-page spread (two pages side by side). The image is 17" wide (two 8.5" pages).
+- Place the text ONLY on the LEFT HALF of the image (the left 8.5" section)
+- The text should be contained within the LEFT PAGE only (left 50% of the image width)
+- Do NOT place text on the right half of the image
+- Position the text in a clear, readable area on the left page (top, middle, or bottom)
+- Use a clear, legible font size that fits the entire text within the left page area
+- Ensure ALL words from the beginning to the end are fully visible on the left page
 - The text must be complete from start to finish: "{story_text}"
-- If needed, use multiple lines to fit all the text, but ALL text must be included
+- If needed, use multiple lines to fit all the text within the left page, but ALL text must be included
 - Do NOT abbreviate, truncate, or use ellipsis (...) - render the FULL text
+- Keep the right half of the image (right page) for the illustration only, without any text
 """ if story_text else ""
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
@@ -315,7 +332,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 raise Exception(f"No image URL in response: {result}")
             
             # Download and resize image to final dimensions
-            resized_image_url = self._resize_image_to_print_size(image_url, page_key)
+            resized_image_url = self._resize_image_to_print_size(image_url, page_key, session_id)
             
             return resized_image_url
             
@@ -323,7 +340,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
             print(f"Error calling SeeDream API: {str(e)}")
             raise
     
-    def _resize_image_to_print_size(self, image_url: str, page_key: str) -> str:
+    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str) -> str:
         """Download image and resize to exact physical dimensions: 17" width x 8.5" height at 300 DPI"""
         try:
             # Download the image from Seedream
@@ -351,7 +368,8 @@ Negative prompt: No changes to the character's face structure, facial proportion
             # Save to uploads directory with proper DPI metadata
             os.makedirs('uploads/generated_images', exist_ok=True)
             page_num = page_key.replace('page ', '').replace(' ', '_')
-            output_filename = f"uploads/generated_images/{page_num}_resized.png"
+            # Use session_id to make filename unique
+            output_filename = f"uploads/generated_images/{session_id}_page_{page_num}.png"
             
             # Save with DPI information embedded
             # This ensures the image will be 17" x 8.5" when printed or viewed in image software
