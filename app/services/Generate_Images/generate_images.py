@@ -71,7 +71,8 @@ class GenerateImages:
         image_style: str,
         coverpage: str = "no",
         sequential: str = "no",
-        story: Optional[Dict[str, str]] = None
+        story: Optional[Dict[str, str]] = None,
+        page_1_url: Optional[str] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
         # Generate unique session ID for this request
@@ -101,7 +102,8 @@ class GenerateImages:
             image_style=image_style,
             force_sequential=force_sequential,
             story=story_to_generate,
-            session_id=session_id
+            session_id=session_id,
+            page_1_url=page_1_url
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -116,16 +118,42 @@ class GenerateImages:
         image_style: str,
         force_sequential: bool = False,
         story: Optional[Dict[str, str]] = None,
-        session_id: str = None
+        session_id: str = None,
+        page_1_url: Optional[str] = None
     ) -> Dict[str, str]:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
         generated_images = {}  # Initialize for sequential generation
+        generated_images_bytes = {}  # Store bytes for direct use
         story = story or {}
         
         # Read reference image
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
+        
+        # If page_1_url is provided, read the image from disk
+        if page_1_url:
+            try:
+                # Extract file path from URL (remove domain part)
+                # Example: http://domain.com/uploads/... -> uploads/...
+                if page_1_url.startswith('http'):
+                    from urllib.parse import urlparse
+                    parsed = urlparse(page_1_url)
+                    file_path = parsed.path.lstrip('/')
+                else:
+                    file_path = page_1_url.lstrip('/')
+                
+                # Read the image file from disk
+                if os.path.exists(file_path):
+                    with open(file_path, 'rb') as f:
+                        page_1_bytes = f.read()
+                    # Store bytes directly for AI use
+                    generated_images_bytes['page 1'] = page_1_bytes
+                    print(f"Loaded page 1 image from disk: {file_path} ({len(page_1_bytes)} bytes)")
+                else:
+                    print(f"Warning: Page 1 image not found at path: {file_path}")
+            except Exception as e:
+                print(f"Error loading page 1 image: {str(e)}")
         
         if force_sequential:
             # Sequential generation when forced
@@ -133,6 +161,7 @@ class GenerateImages:
             
             for page_key, prompt in sorted_pages:
                 reference_page = None
+                reference_page_bytes = None
                 use_raw_image = False
                 
                 if page_key == "page 0":
@@ -146,11 +175,16 @@ class GenerateImages:
                     # Check if there's a specific page connection
                     if page_connections and page_key in page_connections:
                         ref_page_key = page_connections[page_key]
-                        reference_page = generated_images.get(ref_page_key)
+                        # Try to get bytes first, then URL
+                        reference_page_bytes = generated_images_bytes.get(ref_page_key)
+                        if not reference_page_bytes:
+                            reference_page = generated_images.get(ref_page_key)
                     
                     # If no specific connection, always use previous page for style consistency
-                    if not reference_page:
-                        reference_page = generated_images.get(prev_page_key)
+                    if not reference_page and not reference_page_bytes:
+                        reference_page_bytes = generated_images_bytes.get(prev_page_key)
+                        if not reference_page_bytes:
+                            reference_page = generated_images.get(prev_page_key)
                     
                     # Don't use raw image for pages after page 0
                     use_raw_image = False
@@ -158,6 +192,7 @@ class GenerateImages:
                 # Debug logging
                 print(f"Generating {page_key}:")
                 print(f"  - Using raw image: {use_raw_image}")
+                print(f"  - Reference page bytes: {len(reference_page_bytes) if reference_page_bytes else 0} bytes")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 
                 image_url = self._generate_single_image(
@@ -169,11 +204,13 @@ class GenerateImages:
                     image_style,
                     page_key,
                     story.get(page_key),
-                    session_id
+                    session_id,
+                    reference_page_bytes=reference_page_bytes
                 )
                 
                 image_urls[page_key] = image_url
                 generated_images[page_key] = image_url
+                # Note: We store URLs, not bytes, as images are already saved by _resize_image_to_print_size
                 print(f"  - Generated URL: {image_url}")
             
             # Clear generated_images dict to free memory after sequential generation
@@ -224,7 +261,8 @@ class GenerateImages:
         image_style: str,
         page_key: str,
         story_text: Optional[str] = None,
-        session_id: str = None
+        session_id: str = None,
+        reference_page_bytes: Optional[bytes] = None
     ) -> str:
         """Generate a single image using SeeDream API"""
         try:
@@ -309,10 +347,15 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
                 payload['reference_image'] = reference_image_base64
             
-            # If there's a reference page image (for sequential generation), include it as style reference
-            # This ensures the model uses the previous page's character appearance and style
-            if reference_page_image:
+            # If there's a reference page (for sequential generation), include it as style reference
+            # Prefer bytes over URL for efficiency - no need to download from our own server
+            if reference_page_bytes:
+                reference_page_base64 = base64.b64encode(reference_page_bytes).decode('utf-8')
+                payload['style_reference_image'] = reference_page_base64
+                print(f"  - Using reference page bytes directly ({len(reference_page_bytes)} bytes)")
+            elif reference_page_image:
                 payload['style_reference_url'] = reference_page_image
+                print(f"  - Using reference page URL: {reference_page_image}")
             
             # Call SeeDream API
             response = requests.post(
