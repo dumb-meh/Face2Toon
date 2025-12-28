@@ -10,6 +10,7 @@ generate_images_service = GenerateImages()
 @router.post("/generate_images_first", response_model=GenerateImageResponse)
 async def generate_first_two_page(
     reference_image: UploadFile = File(..., description="Reference image of the child"),
+    story:str = Form(..., description="JSON string of story content for each page"),
     prompt: str = Form(..., description="JSON string of prompts for each page"),
     page_connections: Optional[str] = Form(default=None, description="JSON string of page connections"),
     gender: str = Form(..., description="Child's gender"),
@@ -19,6 +20,7 @@ async def generate_first_two_page(
 ):
     """Generate images for page 0 (cover) and page 1 only"""
     try:
+        story_dict = json.loads(story)
         prompt_dict = json.loads(prompt)
         page_connections_dict = json.loads(page_connections) if page_connections else None
         
@@ -29,7 +31,8 @@ async def generate_first_two_page(
             gender,
             age,
             image_style,
-            sequential
+            sequential,
+            story_dict
         )
         return response
     except Exception as e:
@@ -38,6 +41,7 @@ async def generate_first_two_page(
 @router.post("/generate_images_full", response_model=GenerateImageResponse)
 async def generate_images(
     reference_image: UploadFile = File(..., description="Reference image of the child"),
+    story:str = Form(..., description="JSON string of story content for each page"),
     prompt: str = Form(..., description="JSON string of prompts for each page"),
     page_connections: Optional[str] = Form(default=None, description="JSON string of page connections"),
     gender: str = Form(..., description="Child's gender"),
@@ -48,6 +52,7 @@ async def generate_images(
 ):
     """Generate images for all pages. Set coverpage='yes' to skip page 0 and page 1."""
     try:
+        story_dict = json.loads(story)
         prompt_dict = json.loads(prompt)
         page_connections_dict = json.loads(page_connections) if page_connections else None
         
@@ -59,7 +64,8 @@ async def generate_images(
             age,
             image_style,
             coverpage=coverpage,
-            sequential=sequential
+            sequential=sequential,
+            story=story_dict
         )
         return response
     except Exception as e:
