@@ -1,50 +1,13 @@
 services:
-  image-processing-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: image-processing-api
+  face2toon:
+    build: .
     ports:
-      - "8065:8065"
+      - "8000:8000"
     environment:
-      - PYTHONPATH=/app
-      - ARK_API_KEY=${ARK_API_KEY:-310e237f-636e-43bc-a59f-1a1c7580965b}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENVIRONMENT=production
     env_file:
       - .env
     volumes:
-      - ./logs:/app/logs  # Optional: for log persistence
-      - ./uploads:/app/uploads  # Mount uploads directory
+      - ./uploads:/app/uploads
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8065/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - image-processing-network
-
-  # Optional: Add nginx reverse proxy
-  nginx:
-    image: nginx:alpine
-    container_name: nginx-proxy
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - image-processing-api
-    restart: unless-stopped
-    networks:
-      - image-processing-network
-    profiles:
-      - with-proxy
-
-networks:
-  image-processing-network:
-    driver: bridge
-
-volumes:
-  logs:
-    driver: local

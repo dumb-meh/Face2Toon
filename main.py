@@ -85,12 +85,12 @@ async def cleanup_old_files():
 async def root():
     """Root endpoint with API information"""
     return {
-        "message": "Welcome to BA CreateX API",
+        "message": "Welcome to Face2Toon API",
         "version": "1.0.0",
         "docs": "/docs",
         "services": {
-            "text_with_image": "/api/v1/text-with-image",
-            "image_to_image": "/api/v1/image-to-image"
+            "generate_story": "/api/v1/generate-story",
+            "generate_images": "/api/v1/generate-images"
         }
     }
 

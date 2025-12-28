@@ -36,6 +36,9 @@ async def generate_first_two_page(
         )
         return response
     except Exception as e:
+        print(f"ERROR in route: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     
 @router.post("/generate_images_full", response_model=GenerateImageResponse)
@@ -48,7 +51,8 @@ async def generate_images(
     age: int = Form(..., description="Child's age"),
     image_style: str = Form(..., description="Desired illustration style"),
     coverpage: str = Query(default="no", description="'yes' if cover and page 1 already exist, 'no' to generate all pages"),
-    sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior")
+    sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior"),
+    page_1_image: Optional[UploadFile] = File(default=None, description="Generated image for page 1 (required when coverpage='yes')")
 ):
     """Generate images for all pages. Set coverpage='yes' to skip page 0 and page 1."""
     try:

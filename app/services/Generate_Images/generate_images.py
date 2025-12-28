@@ -19,7 +19,7 @@ class GenerateImages:
         self.api_key = os.getenv("ARK_API_KEY")
         self.model = "seedream-4-0-250828"
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
-        self.max_connections_for_parallel = 2  # If more connections than this, ignore them for parallel processing
+        self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
 
     def generate_first_two_page(
         self,
@@ -33,6 +33,8 @@ class GenerateImages:
         story: Optional[Dict[str, str]] = None
     ) -> GenerateImageResponse:
         """Generate images for page 0 (cover) and page 1 only"""
+        print(f"DEBUG generate_first_two_page: prompts type={type(prompts)}, page_connections type={type(page_connections)}")
+        
         # Filter to only page 0 and page 1
         pages_to_generate = {k: v for k, v in prompts.items() if k in ['page 0', 'page 1']}
         story_to_generate = {k: v for k, v in story.items() if k in ['page 0', 'page 1']} if story else {}
@@ -80,19 +82,12 @@ class GenerateImages:
         # Check if sequential generation is forced
         force_sequential = sequential.lower() == "yes"
         
-        # Decide whether to use page connections based on complexity or force sequential
-        use_connections = False
-        if force_sequential:
-            # Always use sequential with connections
-            use_connections = True
-        elif page_connections and len(page_connections) <= self.max_connections_for_parallel:
-            use_connections = True
-        
+        # For parallel mode, ignore page_connections completely
+        # For sequential mode, use page_connections
         image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
-            page_connections if use_connections else None,
-            generated_images={},
+            page_connections if force_sequential else None,
             gender=gender,
             age=age,
             image_style=image_style,
@@ -107,7 +102,6 @@ class GenerateImages:
         pages: Dict[str, str],
         reference_image: UploadFile,
         page_connections: Optional[Dict[str, str]],
-        generated_images: Dict[str, str],
         gender: str,
         age: int,
         image_style: str,
@@ -122,26 +116,53 @@ class GenerateImages:
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
         
-        if page_connections or force_sequential:
-            # Sequential generation for pages with connections or when forced
+        # If page_1_image is provided, save it for sequential generation starting from page 2
+        page_1_bytes = None
+        if page_1_image:
+            page_1_bytes = page_1_image.file.read()
+            page_1_image.file.seek(0)
+        
+        if force_sequential:
+            # Sequential generation when forced
             sorted_pages = sorted(pages.items(), key=lambda x: int(x[0].split()[1]))
             
             for page_key, prompt in sorted_pages:
                 reference_page = None
+                use_raw_image = False
+                use_page_1_image = False
                 
-                # If force_sequential, use previous page as reference (except for page 0)
-                if force_sequential and page_key != "page 0":
+                if page_key == "page 0":
+                    # Only page 0 uses the raw reference image
+                    use_raw_image = True
+                else:
+                    # For all other pages in sequential mode
                     page_num = int(page_key.split()[1])
                     prev_page_key = f"page {page_num - 1}"
-                    reference_page = generated_images.get(prev_page_key)
-                # Otherwise check page_connections
-                elif page_connections and page_key in page_connections:
-                    ref_page_key = page_connections[page_key]
-                    reference_page = generated_images.get(ref_page_key)
+                    
+                    # Special case: page 2 should use page 1 image if provided
+                    if page_key == "page 2" and page_1_bytes:
+                        use_page_1_image = True
+                    # Check if there's a specific page connection
+                    elif page_connections and page_key in page_connections:
+                        ref_page_key = page_connections[page_key]
+                        reference_page = generated_images.get(ref_page_key)
+                    
+                    # If no specific connection, always use previous page for style consistency
+                    if not reference_page and not use_page_1_image:
+                        reference_page = generated_images.get(prev_page_key)
+                    
+                    # Don't use raw image for pages after page 0
+                    use_raw_image = False
+                
+                # Debug logging
+                print(f"Generating {page_key}:")
+                print(f"  - Using raw image: {use_raw_image}")
+                print(f"  - Using page 1 image: {use_page_1_image}")
+                print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 
                 image_url = self._generate_single_image(
                     prompt,
-                    reference_image_bytes,
+                    reference_image_bytes if use_raw_image else (page_1_bytes if use_page_1_image else None),
                     reference_page,
                     gender,
                     age,
@@ -152,15 +173,24 @@ class GenerateImages:
                 
                 image_urls[page_key] = image_url
                 generated_images[page_key] = image_url
+                print(f"  - Generated URL: {image_url}")
+            
+            # Clear generated_images dict to free memory after sequential generation
+            generated_images.clear()
+            print("Cleared generated_images cache after sequential generation")
         else:
-            # Parallel generation when no connections
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            # Parallel generation - all pages use the reference image
+            # Generate 5 images at once to optimize performance
+            print(f"Parallel generation mode: Generating {len(pages)} pages in batches of {self.parallel_batch_size}\"")
+            print(f"All pages will use the reference image, ignoring any page connections")
+            
+            with ThreadPoolExecutor(max_workers=self.parallel_batch_size) as executor:
                 futures = {
                     executor.submit(
                         self._generate_single_image,
                         prompt,
-                        reference_image_bytes,
-                        None,
+                        reference_image_bytes,  # All pages get reference image in parallel mode
+                        None,  # No previous page reference in parallel mode
                         gender,
                         age,
                         image_style,
@@ -175,6 +205,7 @@ class GenerateImages:
                     try:
                         image_url = future.result()
                         image_urls[page_key] = image_url
+                        print(f"  - {page_key}: Generated successfully")
                     except Exception as e:
                         print(f"Error generating image for {page_key}: {str(e)}")
                         raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
@@ -184,7 +215,7 @@ class GenerateImages:
     def _generate_single_image(
         self,
         prompt: str,
-        reference_image_bytes: bytes,
+        reference_image_bytes: Optional[bytes],
         reference_page_image: Optional[str],
         gender: str,
         age: int,
@@ -221,12 +252,13 @@ The text should be placed in a suitable location (top, bottom, or side) in a cle
 """ if story_text else ""
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
-Main character: {age}-year-old {gender} child from the reference image.
+Main character: {age}-year-old {gender} child continuing from the previous page.
 {prompt}
 {text_instruction}
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
-The child's appearance (face, features, hair, skin tone) must exactly match the reference image provided.
-Focus on: the scene, actions, setting, clothing, background, and other characters while maintaining the child's exact appearance from reference.
+CRITICAL: Maintain EXACT character appearance from the style reference - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. If clothing colors or patterns are specified in the prompt, follow them precisely without variation.
+Focus on: implementing the exact scene, actions, setting, and clothing details as described while preserving all character appearance characteristics.
+Negative prompt: No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance.
 """.strip()
             
             # Prepare headers
@@ -249,9 +281,16 @@ Focus on: the scene, actions, setting, clothing, background, and other character
                 'height': 2880
             }
             
-            # If there's a reference page image, include it
+            # Add reference image only if provided (page 0 only in sequential mode)
+            if reference_image_bytes:
+                import base64
+                reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
+                payload['reference_image'] = reference_image_base64
+            
+            # If there's a reference page image (for sequential generation), include it as style reference
+            # This ensures the model uses the previous page's character appearance and style
             if reference_page_image:
-                payload['reference_page_url'] = reference_page_image
+                payload['style_reference_url'] = reference_page_image
             
             # Call SeeDream API
             response = requests.post(

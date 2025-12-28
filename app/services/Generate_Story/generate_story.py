@@ -43,21 +43,38 @@ Return a JSON object with three fields:
    - "page 1" to "page 10": Story text for each page in {input_data['language']}
 
 2. "prompt": A dictionary with keys "page 0" through "page 10"
-   - Each value is a detailed image generation prompt for that page
-   - IMPORTANT: ALL prompts must be written in ENGLISH (regardless of story language)
-   - IMPORTANT: A reference image of the child will be provided to the image generator
-   - For "page 0" (cover): Include the story title in the prompt and describe a cover scene featuring the child
-   - For "page 1" to "page 10": Start each prompt mentioning the child from the reference image (e.g., "The child from the reference image...")
-   - Do NOT describe the child's physical features (face, hair, skin tone) as these come from the reference image
-   - Focus on: clothing, pose, actions, setting, background, mood, other characters, and scene details
-   - Style: {input_data['image_style']}
-   - Maintain character consistency across pages
-   - Each prompt should be 2-3 sentences in English
+   - Each value is a HIGHLY DETAILED image generation prompt for that page
+   - CRITICAL: ALL prompts must be written in ENGLISH (regardless of story language)
+   - CRITICAL: A reference image of the child will be provided to the image generator
+   - CRITICAL: Image models have limited reasoning - prompts must be extremely specific and descriptive
+   
+   PROMPT GUIDELINES:
+   - For "page 0" (cover): Start with "The child from the reference image..." and describe a compelling cover scene with the story title
+   - For story pages (1-10): Start with "The main character {input_data['name']}..." or "The child..." (do NOT say 'from reference image')
+   - Be very specific about EVERY element in the scene
+   - Do NOT describe facial features, skin tone, eye color, hair color/style - these are maintained from previous images
+   - DO describe: exact clothing details (colors, patterns, type), specific pose, precise actions, setting details
+   - Specify background elements, lighting, mood, other characters (with detailed descriptions)
+   - If clothing appears in multiple pages, specify EXACT same colors/patterns to maintain consistency
+   - Include composition details: foreground, midground, background elements
+   - Each prompt should be 4-6 detailed sentences in English
+   - Add negative prompting at the end: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
+   
+   Style: {input_data['image_style']}
+   
+   EXAMPLE GOOD PROMPTS:
+   Page 0: "The child from the reference image wearing a red t-shirt with blue jeans, standing in a magical forest. [rest of detailed description]"
+   Page 1+: "The child {input_data['name']} wearing a red t-shirt with blue jeans, standing in a sunny park with green grass and tall oak trees in the background. The child is holding a bright yellow kite with a long blue tail, smiling while looking up at the sky. Behind them, there's a wooden bench and a small pond with ducks. Warm afternoon sunlight creates soft shadows on the ground. The scene has a joyful, carefree mood with vibrant colors. Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
 
 3. "page_connections": A dictionary mapping pages that should maintain visual consistency
-   - Example: {{"page 3": "page 1"}} means page 3's image should reference page 1's generated image
-   - Use this for scenes with the same location or character poses
-   - Can be null if no specific connections needed
+   - STRICT CRITERIA: Only create connections when BOTH conditions are met:
+     a) Pages feature the SAME character(s) in similar poses/positions, OR
+     b) Pages show the EXACT SAME location/setting
+   - Example: {{"page 3": "page 1"}} means page 3 visually references page 1
+   - Use sparingly - only when visual consistency is critical (same outfit, same room, continuation of action)
+   - Do NOT connect pages just because they're sequential
+   - Can be null or empty {{}} if no specific visual connections needed
+   - Think carefully: does this page show the same people in the same clothes AND/OR the same location?
 
 Example output structure:
 {{
@@ -67,13 +84,12 @@ Example output structure:
     "page 2": "And then..."
   }},
   "prompt": {{
-    "page 0": "Book cover illustration showing...",
-    "page 1": "Illustration of a child named {input_data['name']}...",
-    "page 2": "Scene showing..."
+    "page 0": "Book cover illustration showing the child from the reference image wearing...[detailed 4-6 sentence prompt]",
+    "page 1": "The child {input_data['name']} wearing a blue striped shirt and khaki shorts...[detailed 4-6 sentence prompt with negative prompting]",
+    "page 2": "The main character {input_data['name']} now in different clothing, a green sweater...[detailed prompt]"
   }},
   "page_connections": {{
-    "page 3": "page 1",
-    "page 5": "page 3"
+    "page 3": "page 2"
   }}
 }}
 
