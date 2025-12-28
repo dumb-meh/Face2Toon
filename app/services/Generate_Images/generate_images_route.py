@@ -24,15 +24,18 @@ async def generate_first_two_page(
         prompt_dict = json.loads(prompt)
         page_connections_dict = json.loads(page_connections) if page_connections else None
         
+        # Debug: Verify types after parsing
+        print(f"DEBUG after parsing: prompt_dict type={type(prompt_dict)}, page_connections_dict type={type(page_connections_dict)}")
+        
         response = generate_images_service.generate_first_two_page(
-            prompt_dict,
-            page_connections_dict,
-            reference_image,
-            gender,
-            age,
-            image_style,
-            sequential,
-            story_dict
+            prompts=prompt_dict,
+            page_connections=page_connections_dict,
+            reference_image=reference_image,
+            gender=gender,
+            age=age,
+            image_style=image_style,
+            sequential=sequential,
+            story=story_dict
         )
         return response
     except Exception as e:
@@ -61,12 +64,12 @@ async def generate_images(
         page_connections_dict = json.loads(page_connections) if page_connections else None
         
         response = generate_images_service.generate_images(
-            prompt_dict,
-            page_connections_dict,
-            reference_image,
-            gender,
-            age,
-            image_style,
+            prompts=prompt_dict,
+            page_connections=page_connections_dict,
+            reference_image=reference_image,
+            gender=gender,
+            age=age,
+            image_style=image_style,
             coverpage=coverpage,
             sequential=sequential,
             story=story_dict
