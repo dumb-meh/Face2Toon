@@ -56,7 +56,8 @@ class GenerateImages:
             image_style=image_style,
             force_sequential=force_sequential,
             story=story_to_generate,
-            session_id=session_id
+            session_id=session_id,
+            should_split=False  # Don't split for first two pages
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -103,7 +104,8 @@ class GenerateImages:
             force_sequential=force_sequential,
             story=story_to_generate,
             session_id=session_id,
-            page_1_url=page_1_url
+            page_1_url=page_1_url,
+            should_split=True  # Enable splitting for full generation
         )
         
         return GenerateImageResponse(image_urls=image_urls)
@@ -119,23 +121,24 @@ class GenerateImages:
         force_sequential: bool = False,
         story: Optional[Dict[str, str]] = None,
         session_id: str = None,
-        page_1_url: Optional[str] = None
+        page_1_url: Optional[str] = None,
+        should_split: bool = False
     ) -> Dict[str, str]:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
         generated_images = {}  # Initialize for sequential generation
         generated_images_bytes = {}  # Store bytes for direct use
         story = story or {}
+        page_counter = 1  # Start from image 1 (page 0 is cover)
         
         # Read reference image
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
         
-        # If page_1_url is provided, read the image from disk
-        if page_1_url:
+        # If page_1_url is provided, read the image from disk and split it
+        if page_1_url and should_split:
             try:
-                # Extract file path from URL (remove domain part)
-                # Example: http://domain.com/uploads/... -> uploads/...
+                # Extract file path from URL
                 if page_1_url.startswith('http'):
                     from urllib.parse import urlparse
                     parsed = urlparse(page_1_url)
@@ -143,17 +146,42 @@ class GenerateImages:
                 else:
                     file_path = page_1_url.lstrip('/')
                 
-                # Read the image file from disk
+                # Read the image file directly from disk
                 if os.path.exists(file_path):
                     with open(file_path, 'rb') as f:
                         page_1_bytes = f.read()
-                    # Store bytes directly for AI use
+                    # Store bytes for AI use
                     generated_images_bytes['page 1'] = page_1_bytes
-                    print(f"Loaded page 1 image from disk: {file_path} ({len(page_1_bytes)} bytes)")
+                    
+                    # Split page 1 image into page 1 and page 2
+                    img = Image.open(io.BytesIO(page_1_bytes))
+                    middle_x = img.width // 2
+                    
+                    left_half = img.crop((0, 0, middle_x, img.height))
+                    right_half = img.crop((middle_x, 0, img.width, img.height))
+                    
+                    os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                    left_filename = f"uploads/generated_images/splitted/{session_id}_page_1.png"
+                    right_filename = f"uploads/generated_images/splitted/{session_id}_page_2.png"
+                    
+                    left_half.save(left_filename, format='PNG', dpi=(300, 300))
+                    right_half.save(right_filename, format='PNG', dpi=(300, 300))
+                    
+                    base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                    base_url = base_url.rstrip('/')
+                    
+                    image_urls['page 1'] = f"{base_url}/{left_filename}"
+                    image_urls['page 2'] = f"{base_url}/{right_filename}"
+                    
+                    print(f"Split provided page 1 into page 1 and page 2")
+                    print(f"  - page 1: {image_urls['page 1']}")
+                    print(f"  - page 2: {image_urls['page 2']}")
+                    
+                    page_counter = 2  # Next generated image will be image 2 (pages 3-4)
                 else:
-                    print(f"Warning: Page 1 image not found at path: {file_path}")
+                    print(f"Warning: Page 1 image not found at: {file_path}")
             except Exception as e:
-                print(f"Error loading page 1 image: {str(e)}")
+                print(f"Error loading/splitting page 1 image: {str(e)}")
         
         if force_sequential:
             # Sequential generation when forced
@@ -195,7 +223,7 @@ class GenerateImages:
                 print(f"  - Reference page bytes: {len(reference_page_bytes) if reference_page_bytes else 0} bytes")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 
-                image_url = self._generate_single_image(
+                image_urls_dict = self._generate_single_image(
                     prompt,
                     reference_image_bytes if use_raw_image else None,
                     reference_page,
@@ -205,13 +233,25 @@ class GenerateImages:
                     page_key,
                     story.get(page_key),
                     session_id,
-                    reference_page_bytes=reference_page_bytes
+                    reference_page_bytes=reference_page_bytes,
+                    should_split=should_split,
+                    page_number=page_counter
                 )
                 
-                image_urls[page_key] = image_url
-                generated_images[page_key] = image_url
-                # Note: We store URLs, not bytes, as images are already saved by _resize_image_to_print_size
-                print(f"  - Generated URL: {image_url}")
+                # Store full URL for AI reference in next pages
+                generated_images[page_key] = image_urls_dict['full']
+                print(f"  - Generated full URL: {image_urls_dict['full']}")
+                
+                # Add split page URLs to response if splitting is enabled
+                if should_split:
+                    for key, url in image_urls_dict.items():
+                        if key != 'full':
+                            image_urls[key] = url
+                            print(f"  - {key}: {url}")
+                    page_counter += 1  # Increment for next image
+                else:
+                    # No splitting, just return full URL
+                    image_urls[page_key] = image_urls_dict['full']
             
             # Clear generated_images dict to free memory after sequential generation
             generated_images.clear()
@@ -219,12 +259,14 @@ class GenerateImages:
         else:
             # Parallel generation - all pages use the reference image
             # Generate 5 images at once to optimize performance
-            print(f"Parallel generation mode: Generating {len(pages)} pages in batches of {self.parallel_batch_size}\"")
+            print(f"Parallel generation mode: Generating {len(pages)} pages in batches of {self.parallel_batch_size}")
             print(f"All pages will use the reference image, ignoring any page connections")
             
             with ThreadPoolExecutor(max_workers=self.parallel_batch_size) as executor:
-                futures = {
-                    executor.submit(
+                futures = {}
+                current_page_counter = page_counter
+                for page_key, prompt in pages.items():
+                    future = executor.submit(
                         self._generate_single_image,
                         prompt,
                         reference_image_bytes,  # All pages get reference image in parallel mode
@@ -234,17 +276,28 @@ class GenerateImages:
                         image_style,
                         page_key,
                         story.get(page_key),
-                        session_id
-                    ): page_key
-                    for page_key, prompt in pages.items()
-                }
+                        session_id,
+                        should_split=should_split,
+                        page_number=current_page_counter
+                    )
+                    futures[future] = page_key
+                    current_page_counter += 1
                 
                 for future in futures:
                     page_key = futures[future]
                     try:
-                        image_url = future.result()
-                        image_urls[page_key] = image_url
-                        print(f"  - {page_key}: Generated successfully")
+                        image_urls_dict = future.result()
+                        
+                        # Add split page URLs to response if splitting is enabled
+                        if should_split:
+                            for key, url in image_urls_dict.items():
+                                if key != 'full':
+                                    image_urls[key] = url
+                                    print(f"  - {key}: {url}")
+                        else:
+                            # No splitting, just return full URL
+                            image_urls[page_key] = image_urls_dict['full']
+                            print(f"  - {page_key}: {image_urls_dict['full']}")
                     except Exception as e:
                         print(f"Error generating image for {page_key}: {str(e)}")
                         raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
@@ -262,8 +315,10 @@ class GenerateImages:
         page_key: str,
         story_text: Optional[str] = None,
         session_id: str = None,
-        reference_page_bytes: Optional[bytes] = None
-    ) -> str:
+        reference_page_bytes: Optional[bytes] = None,
+        should_split: bool = False,
+        page_number: int = None
+    ) -> Dict[str, str]:
         """Generate a single image using SeeDream API"""
         try:
             # Enhance the prompt with detailed style and character instructions
@@ -374,17 +429,19 @@ Negative prompt: No changes to the character's face structure, facial proportion
             if not image_url:
                 raise Exception(f"No image URL in response: {result}")
             
-            # Download and resize image to final dimensions
-            resized_image_url = self._resize_image_to_print_size(image_url, page_key, session_id)
+            # Download and resize image to final dimensions, optionally split
+            image_urls_dict = self._resize_image_to_print_size(image_url, page_key, session_id, should_split, page_number)
             
-            return resized_image_url
+            # Return the dict containing full URL and optionally split page URLs
+            return image_urls_dict
             
         except Exception as e:
             print(f"Error calling SeeDream API: {str(e)}")
             raise
     
-    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str) -> str:
-        """Download image and resize to exact physical dimensions: 17" width x 8.5" height at 300 DPI"""
+    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str, should_split: bool = False, page_number: int = None) -> Dict[str, str]:
+        """Download image and resize to exact physical dimensions: 17" width x 8.5" height at 300 DPI
+        If should_split=True, split the image in the middle and save both halves as separate pages"""
         try:
             # Download the image from Seedream
             response = requests.get(image_url, timeout=60)
@@ -408,28 +465,63 @@ Negative prompt: No changes to the character's face structure, facial proportion
             # Using LANCZOS for high-quality resizing
             resized_img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             
-            # Save to uploads directory with proper DPI metadata
+            # Save full image to uploads directory with proper DPI metadata
             os.makedirs('uploads/generated_images', exist_ok=True)
-            page_num = page_key.replace('page ', '').replace(' ', '_')
+            page_num_str = page_key.replace('page ', '').replace(' ', '_')
             # Use session_id to make filename unique
-            output_filename = f"uploads/generated_images/{session_id}_page_{page_num}.png"
+            full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
             
-            # Save with DPI information embedded
-            # This ensures the image will be 17" x 8.5" when printed or viewed in image software
-            resized_img.save(output_filename, format='PNG', dpi=(dpi, dpi))
+            # Save full image with DPI information embedded
+            resized_img.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
             
             print(f"Saved {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
             
-            # Construct public URL
+            # Construct base URL
             base_url = os.getenv('domain') or os.getenv('BASE_URL')
-            # Ensure base_url doesn't end with slash
             base_url = base_url.rstrip('/')
-            # Create public URL path
-            public_url = f"{base_url}/{output_filename}"
+            full_image_url = f"{base_url}/{full_image_filename}"
             
-            return public_url
+            # If splitting is disabled, return only the full image URL
+            if not should_split:
+                return {'full': full_image_url}
+            
+            # Split the image in the middle for book pages
+            # Left half: 0 to 2550 pixels (8.5" x 8.5")
+            # Right half: 2550 to 5100 pixels (8.5" x 8.5")
+            middle_x = target_width // 2  # 2550
+            
+            left_half = resized_img.crop((0, 0, middle_x, target_height))
+            right_half = resized_img.crop((middle_x, 0, target_width, target_height))
+            
+            # Create splitted directory
+            os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+            
+            # Calculate page numbers: each image becomes 2 pages
+            # page_number is the image number (0, 1, 2, 3...)
+            # Image 1 -> page 1, page 2
+            # Image 2 -> page 3, page 4
+            left_page_num = (page_number * 2) + 1
+            right_page_num = (page_number * 2) + 2
+            
+            # Save split images
+            left_filename = f"uploads/generated_images/splitted/{session_id}_page_{left_page_num}.png"
+            right_filename = f"uploads/generated_images/splitted/{session_id}_page_{right_page_num}.png"
+            
+            left_half.save(left_filename, format='PNG', dpi=(dpi, dpi))
+            right_half.save(right_filename, format='PNG', dpi=(dpi, dpi))
+            
+            print(f"  - Split into page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
+            
+            left_url = f"{base_url}/{left_filename}"
+            right_url = f"{base_url}/{right_filename}"
+            
+            return {
+                'full': full_image_url,
+                f'page {left_page_num}': left_url,
+                f'page {right_page_num}': right_url
+            }
             
         except Exception as e:
             print(f"Error resizing image: {str(e)}")
             # Return original URL if resize fails
-            return image_url
+            return {'full': image_url}
