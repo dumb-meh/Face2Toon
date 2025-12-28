@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 import io
 import base64
+from urllib.parse import urljoin
 
 load_dotenv()
 
@@ -314,8 +315,14 @@ Focus on: the scene, actions, setting, clothing, background, and other character
             
             print(f"Saved {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
             
-            # Return the local file path
-            return output_filename
+            # Construct public URL
+            base_url = os.getenv('domain') or os.getenv('BASE_URL', 'http://localhost:8000')
+            # Ensure base_url doesn't end with slash
+            base_url = base_url.rstrip('/')
+            # Create public URL path
+            public_url = f"{base_url}/{output_filename}"
+            
+            return public_url
             
         except Exception as e:
             print(f"Error resizing image: {str(e)}")
