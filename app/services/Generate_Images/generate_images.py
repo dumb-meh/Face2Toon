@@ -110,17 +110,12 @@ class GenerateImages:
     ) -> Dict[str, str]:
         """Generate images for specified pages using SeeDream API"""
         image_urls = {}
+        generated_images = {}  # Initialize for sequential generation
         story = story or {}
         
         # Read reference image
         reference_image_bytes = reference_image.file.read()
         reference_image.file.seek(0)  # Reset file pointer
-        
-        # If page_1_image is provided, save it for sequential generation starting from page 2
-        page_1_bytes = None
-        if page_1_image:
-            page_1_bytes = page_1_image.file.read()
-            page_1_image.file.seek(0)
         
         if force_sequential:
             # Sequential generation when forced
@@ -129,7 +124,6 @@ class GenerateImages:
             for page_key, prompt in sorted_pages:
                 reference_page = None
                 use_raw_image = False
-                use_page_1_image = False
                 
                 if page_key == "page 0":
                     # Only page 0 uses the raw reference image
@@ -139,16 +133,13 @@ class GenerateImages:
                     page_num = int(page_key.split()[1])
                     prev_page_key = f"page {page_num - 1}"
                     
-                    # Special case: page 2 should use page 1 image if provided
-                    if page_key == "page 2" and page_1_bytes:
-                        use_page_1_image = True
                     # Check if there's a specific page connection
-                    elif page_connections and page_key in page_connections:
+                    if page_connections and page_key in page_connections:
                         ref_page_key = page_connections[page_key]
                         reference_page = generated_images.get(ref_page_key)
                     
                     # If no specific connection, always use previous page for style consistency
-                    if not reference_page and not use_page_1_image:
+                    if not reference_page:
                         reference_page = generated_images.get(prev_page_key)
                     
                     # Don't use raw image for pages after page 0
@@ -157,12 +148,11 @@ class GenerateImages:
                 # Debug logging
                 print(f"Generating {page_key}:")
                 print(f"  - Using raw image: {use_raw_image}")
-                print(f"  - Using page 1 image: {use_page_1_image}")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 
                 image_url = self._generate_single_image(
                     prompt,
-                    reference_image_bytes if use_raw_image else (page_1_bytes if use_page_1_image else None),
+                    reference_image_bytes if use_raw_image else None,
                     reference_page,
                     gender,
                     age,
@@ -229,9 +219,17 @@ class GenerateImages:
             if page_key == "page 0":
                 # Cover page - include title rendering with text
                 text_instruction = f"""
-IMPORTANT: The image must include the following text rendered beautifully in the illustration:
-Text to render: "{story_text}"
-The text should be integrated into the cover design in an artistic, readable way suitable for a children's book title.
+CRITICAL TEXT RENDERING REQUIREMENT:
+You MUST include the COMPLETE title text exactly as written below in the generated image.
+
+FULL TITLE TO RENDER:
+"{story_text}"
+
+TEXT PLACEMENT INSTRUCTIONS:
+- Integrate the title prominently into the cover design
+- Use an artistic, readable font suitable for a children's book title
+- Ensure the ENTIRE title is visible and readable
+- The text should be beautifully styled but COMPLETE from start to finish
 """ if story_text else """
 Composition suitable for a book cover with space for title text.
 """
@@ -246,9 +244,21 @@ The child's face, features, hair, and appearance must exactly match the referenc
             else:
                 # Story pages - include story text to be rendered in the image
                 text_instruction = f"""
-IMPORTANT: The image must include the following story text rendered clearly and readably in the illustration:
-Text to render: "{story_text}"
-The text should be placed in a suitable location (top, bottom, or side) in a clear, readable font that complements the illustration style.
+CRITICAL TEXT RENDERING REQUIREMENT:
+You MUST include the COMPLETE text exactly as written below in the generated image. Do not truncate, shorten, or cut off any words.
+The ENTIRE text MUST be visible and readable in the image.
+
+FULL TEXT TO RENDER (COMPLETE, NO TRUNCATION):
+"{story_text}"
+
+TEXT PLACEMENT INSTRUCTIONS:
+- Place the text in a text box or banner area within the illustration
+- Use a clear, legible font size that fits the entire text
+- Position the text at the top or bottom of the image where it won't be cut off
+- Ensure ALL words from the beginning to the end are fully visible
+- The text must be complete from start to finish: "{story_text}"
+- If needed, use multiple lines to fit all the text, but ALL text must be included
+- Do NOT abbreviate, truncate, or use ellipsis (...) - render the FULL text
 """ if story_text else ""
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
@@ -267,23 +277,18 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 'Content-Type': 'application/json'
             }
             
-            # Encode reference image to base64
-            reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
-            
             # Prepare payload with 16:9 aspect ratio (will be resized to final dimensions)
             # Generate at 5120x2880 (16:9) to later resize to 5100x2550 (17"x8.5" at 300 DPI)
             # Note: Cannot use 'size' and 'width'/'height' together per SeeDream docs
             payload = {
                 'model': self.model,
                 'prompt': enhanced_prompt,
-                'reference_image': reference_image_base64,
                 'width': 5120,
                 'height': 2880
             }
             
             # Add reference image only if provided (page 0 only in sequential mode)
             if reference_image_bytes:
-                import base64
                 reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
                 payload['reference_image'] = reference_image_base64
             
