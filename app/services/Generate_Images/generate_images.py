@@ -177,7 +177,7 @@ class GenerateImages:
                     print(f"  - page 1: {image_urls['page 1']}")
                     print(f"  - page 2: {image_urls['page 2']}")
                     
-                    page_counter = 2  # Next generated image will be image 2 (pages 3-4)
+                    page_counter = 1  # Next generated image will be image 1 (pages 3-4)
                 else:
                     print(f"Warning: Page 1 image not found at: {file_path}")
             except Exception as e:
