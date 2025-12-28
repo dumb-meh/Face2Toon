@@ -316,7 +316,7 @@ Focus on: the scene, actions, setting, clothing, background, and other character
             print(f"Saved {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
             
             # Construct public URL
-            base_url = os.getenv('domain') or os.getenv('BASE_URL', 'http://localhost:8000')
+            base_url = os.getenv('domain') or os.getenv('BASE_URL')
             # Ensure base_url doesn't end with slash
             base_url = base_url.rstrip('/')
             # Create public URL path
