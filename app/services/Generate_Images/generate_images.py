@@ -255,17 +255,35 @@ class GenerateImages:
                 )
                 
                 # Store full URL for AI reference in next pages
-                generated_images[page_key] = image_urls_dict['full']
-                print(f"  - Generated full URL: {image_urls_dict['full']}")
+                # For pages with custom keys (coloring pages), get the actual URL value
+                if 'full' in image_urls_dict:
+                    generated_images[page_key] = image_urls_dict['full']
+                    print(f"  - Generated full URL: {image_urls_dict['full']}")
+                else:
+                    # Get the first URL value (for coloring pages with custom keys)
+                    url_value = next(iter(image_urls_dict.values()))
+                    generated_images[page_key] = url_value
+                    print(f"  - Generated URL: {url_value}")
                 
                 # Add URLs to response based on whether page is split
                 if should_split and page_key != 'page 0':
-                    # Split pages (except cover) - add individual page URLs
-                    for key, url in image_urls_dict.items():
-                        if key != 'full':
-                            image_urls[key] = url
-                            print(f"  - {key}: {url}")
-                    page_counter += 1  # Increment for next image
+                    # Check if page was actually split or returned with a different key
+                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                    is_coloring_page = page_num == 12 or page_num == 13
+                    
+                    if is_coloring_page:
+                        # Coloring pages are not split, add with their custom key (page 23, 24)
+                        for key, url in image_urls_dict.items():
+                            if key != 'full':
+                                image_urls[key] = url
+                                print(f"  - {key}: {url}")
+                    else:
+                        # Split pages - add individual page URLs
+                        for key, url in image_urls_dict.items():
+                            if key != 'full':
+                                image_urls[key] = url
+                                print(f"  - {key}: {url}")
+                        page_counter += 1  # Increment for next image
                 else:
                     # No splitting OR cover page - return full URL with original key
                     image_urls[page_key] = image_urls_dict['full']
@@ -326,9 +344,17 @@ class GenerateImages:
                                     image_urls[key] = url
                                     print(f"  - {key}: {url}")
                         else:
-                            # Page was not split (page 0 or splitting disabled) - return full URL
-                            image_urls[page_key] = image_urls_dict['full']
-                            print(f"  - {page_key}: {image_urls_dict['full']}")
+                            # Page was not split (page 0, coloring pages, or splitting disabled)
+                            # Check if dict has a specific key (like 'page 23' for coloring pages)
+                            for key, url in image_urls_dict.items():
+                                if key != 'full':
+                                    # Use the specific key (e.g., 'page 23', 'page 24')
+                                    image_urls[key] = url
+                                    print(f"  - {key}: {url}")
+                                else:
+                                    # No specific key, use original page_key
+                                    image_urls[page_key] = url
+                                    print(f"  - {page_key}: {url}")
                     except Exception as e:
                         print(f"Error generating image for {page_key}: {str(e)}")
                         raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
@@ -383,8 +409,16 @@ Style: Professional children's book illustration, vibrant colors, high quality, 
 The child's face, features, hair, and appearance must exactly match the reference image provided.
 """.strip()
             else:
-                # Story pages - include story text to be rendered in the image
-                text_instruction = f"""
+                # Check if this is a coloring page (pages 12 or 13)
+                page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                is_coloring_page = page_num == 12 or page_num == 13
+                
+                # Story pages - include story text to be rendered in the image (except coloring pages)
+                if is_coloring_page:
+                    # No text for coloring pages
+                    text_instruction = ""
+                else:
+                    text_instruction = f"""
 CRITICAL TEXT RENDERING REQUIREMENT:
 You MUST include the COMPLETE text exactly as written below in the generated image. Do not truncate, shorten, or cut off any words.
 The ENTIRE text MUST be visible and readable in the image.
@@ -422,14 +456,25 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 'Content-Type': 'application/json'
             }
             
-            # Prepare payload with 16:9 aspect ratio (will be resized to final dimensions)
-            # Generate at 5120x2880 (16:9) to later resize to 5100x2550 (17"x8.5" at 300 DPI)
+            # Prepare payload with appropriate dimensions
+            # Pages 0, 12, 13: 8.5"x8.5" at 300 DPI = 2550x2550 pixels
+            # Other pages: 16:9 aspect ratio (5120x2880) to later resize to 5100x2550 (17"x8.5" at 300 DPI)
             # Note: Cannot use 'size' and 'width'/'height' together per SeeDream docs
+            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+            if page_key == 'page 0' or page_num == 12 or page_num == 13:
+                # Square format for cover and coloring pages
+                width = 2550
+                height = 2550
+            else:
+                # Double-page spread format for story pages
+                width = 5120
+                height = 2880
+            
             payload = {
                 'model': self.model,
                 'prompt': enhanced_prompt,
-                'width': 5120,
-                'height': 2880
+                'width': width,
+                'height': height
             }
             
             # Add reference image only if provided (page 0 only in sequential mode)
@@ -475,7 +520,9 @@ Negative prompt: No changes to the character's face structure, facial proportion
             raise
     
     def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str, should_split: bool = False, page_number: int = None) -> Dict[str, str]:
-        """Download image and resize to exact physical dimensions: 17" width x 8.5" height at 300 DPI
+        """Download image and resize to exact physical dimensions
+        Pages 0, 12, 13: 8.5" x 8.5" at 300 DPI (cover and coloring pages)
+        Other pages: 17" width x 8.5" height at 300 DPI
         If should_split=True and page_key != 'page 0', split the image in the middle and save both halves as separate pages"""
         try:
             # Download the image from Seedream
@@ -485,12 +532,23 @@ Negative prompt: No changes to the character's face structure, facial proportion
             # Open image with PIL
             img = Image.open(io.BytesIO(response.content))
             
+            # Determine if this is a single page (cover or coloring page)
+            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
+            
             # Physical dimensions in inches
-            width_inches = 17.0
-            height_inches = 8.5
             dpi = 300
+            if is_single_page:
+                # Square pages: cover and coloring pages
+                width_inches = 8.5
+                height_inches = 8.5
+            else:
+                # Double-page spread for story pages
+                width_inches = 17.0
+                height_inches = 8.5
             
             # Calculate pixel dimensions from physical size
+            # 8.5 inches * 300 DPI = 2550 pixels (square)
             # 17 inches * 300 DPI = 5100 pixels width
             # 8.5 inches * 300 DPI = 2550 pixels height
             target_width = int(width_inches * dpi)
@@ -516,9 +574,21 @@ Negative prompt: No changes to the character's face structure, facial proportion
             base_url = base_url.rstrip('/')
             full_image_url = f"{base_url}/{full_image_filename}"
             
-            # NEVER split cover page (page 0), or if splitting is disabled
-            if not should_split or page_key == 'page 0':
-                return {'full': full_image_url}
+            # NEVER split cover page (page 0), coloring pages (12, 13), or if splitting is disabled
+            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
+            
+            if not should_split or is_single_page:
+                # For coloring pages (12, 13), return them as pages 23, 24
+                # Because pages 1-11 when split = pages 1-22
+                if page_num == 12:
+                    return_key = 'page 23'
+                elif page_num == 13:
+                    return_key = 'page 24'
+                else:
+                    return_key = 'full'
+                
+                return {return_key: full_image_url}
             
             # Split the image in the middle for book pages
             # Left half: 0 to 2550 pixels (8.5" x 8.5")
