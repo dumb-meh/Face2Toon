@@ -9,7 +9,9 @@ generate_images_service = GenerateImages()
 
 @router.post("/generate_images_first", response_model=GenerateImageResponse)
 async def generate_first_two_page(
-    reference_image: UploadFile = File(..., description="Reference image of the child"),
+    reference_image_1: UploadFile = File(..., description="First reference image of the child"),
+    reference_image_2: Optional[UploadFile] = File(None, description="Second reference image of the child"),
+    reference_image_3: Optional[UploadFile] = File(None, description="Third reference image of the child"),
     story:str = Form(..., description="JSON string of story content for each page"),
     prompt: str = Form(..., description="JSON string of prompts for each page"),
     page_connections: Optional[str] = Form(default=None, description="JSON string of page connections"),
@@ -63,10 +65,17 @@ async def generate_first_two_page(
         if page_connections_dict is not None and not isinstance(page_connections_dict, dict):
             raise HTTPException(status_code=400, detail=f"page_connections must be a JSON object (dict), got {type(page_connections_dict).__name__}")
         
+        # Collect reference images into list
+        reference_images = [reference_image_1]
+        if reference_image_2:
+            reference_images.append(reference_image_2)
+        if reference_image_3:
+            reference_images.append(reference_image_3)
+        
         response = generate_images_service.generate_first_two_page(
             prompts=prompt_dict,
             page_connections=page_connections_dict,
-            reference_image=reference_image,
+            reference_images=reference_images,
             gender=gender,
             age=age,
             image_style=image_style,
@@ -82,7 +91,9 @@ async def generate_first_two_page(
     
 @router.post("/generate_images_full", response_model=GenerateImageResponse)
 async def generate_images(
-    reference_image: UploadFile = File(..., description="Reference image of the child"),
+    reference_image_1: Optional[UploadFile] = File(None, description="First reference image of the child"),
+    reference_image_2: Optional[UploadFile] = File(None, description="Second reference image of the child"),
+    reference_image_3: Optional[UploadFile] = File(None, description="Third reference image of the child"),
     story:str = Form(..., description="JSON string of story content for each page"),
     prompt: str = Form(..., description="JSON string of prompts for each page"),
     page_connections: Optional[str] = Form(default=None, description="JSON string of page connections"),
@@ -138,10 +149,20 @@ async def generate_images(
         if page_connections_dict is not None and not isinstance(page_connections_dict, dict):
             raise HTTPException(status_code=400, detail=f"page_connections must be a JSON object (dict), got {type(page_connections_dict).__name__}")
         
+        # Collect reference images - only use if coverpage='no' (generating all pages)
+        reference_images = []
+        if coverpage.lower() == "no":
+            if reference_image_1:
+                reference_images.append(reference_image_1)
+            if reference_image_2:
+                reference_images.append(reference_image_2)
+            if reference_image_3:
+                reference_images.append(reference_image_3)
+        
         response = generate_images_service.generate_images(
             prompts=prompt_dict,
             page_connections=page_connections_dict,
-            reference_image=reference_image,
+            reference_images=reference_images if reference_images else None,
             gender=gender,
             age=age,
             image_style=image_style,

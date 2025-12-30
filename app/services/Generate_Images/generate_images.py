@@ -27,7 +27,7 @@ class GenerateImages:
         self,
         prompts: Dict[str, str],
         page_connections: Optional[Dict[str, str]],
-        reference_image: UploadFile,
+        reference_images: List[UploadFile],
         gender: str,
         age: int,
         image_style: str,
@@ -49,7 +49,7 @@ class GenerateImages:
         
         image_urls, full_image_urls = self._generate_images_for_pages(
             pages_to_generate,
-            reference_image,
+            reference_images,
             page_connections=page_connections if force_sequential else None,
             gender=gender,
             age=age,
@@ -68,7 +68,7 @@ class GenerateImages:
         self,
         prompts: Dict[str, str],
         page_connections: Optional[Dict[str, str]],
-        reference_image: UploadFile,
+        reference_images: Optional[List[UploadFile]],
         gender: str,
         age: int,
         image_style: str,
@@ -102,7 +102,7 @@ class GenerateImages:
         # For sequential mode, use page_connections
         image_urls, full_image_urls = self._generate_images_for_pages(
             pages_to_generate,
-            reference_image,
+            reference_images,
             page_connections if force_sequential else None,
             gender=gender,
             age=age,
@@ -121,7 +121,7 @@ class GenerateImages:
     def _generate_images_for_pages(
         self,
         pages: Dict[str, str],
-        reference_image: UploadFile,
+        reference_images: Optional[List[UploadFile]],
         page_connections: Optional[Dict[str, str]],
         gender: str,
         age: int,
@@ -145,9 +145,13 @@ class GenerateImages:
         # If no page_1_url, first generated image is image 0 for page 0, or image 1 for pages 1-2 (if skipping cover)
         page_counter_start = 0
         
-        # Read reference image
-        reference_image_bytes = reference_image.file.read()
-        reference_image.file.seek(0)  # Reset file pointer
+        # Read all reference images
+        reference_images_bytes_list = []
+        if reference_images:
+            for ref_img in reference_images:
+                img_bytes = ref_img.file.read()
+                ref_img.file.seek(0)  # Reset file pointer
+                reference_images_bytes_list.append(img_bytes)
         
         # If page_1_url is provided, read the image from disk and split it
         if page_1_url and should_split:
@@ -247,7 +251,7 @@ class GenerateImages:
                 
                 image_urls_dict = self._generate_single_image(
                     prompt,
-                    reference_image_bytes if use_raw_image else None,
+                    reference_images_bytes_list if use_raw_image else None,
                     reference_page,
                     gender,
                     age,
@@ -324,7 +328,7 @@ class GenerateImages:
                     future = executor.submit(
                         self._generate_single_image,
                         prompt,
-                        reference_image_bytes,  # All pages get reference image in parallel mode
+                        reference_images_bytes_list,  # All pages get reference images in parallel mode
                         None,  # No previous page reference in parallel mode
                         gender,
                         age,
@@ -346,9 +350,7 @@ class GenerateImages:
                         has_split_pages = any(key != 'full' for key in image_urls_dict.keys())
                         
                         if has_split_pages:
-                            # Page was split - add split page URLs and store full URL
-                            if 'full' in image_urls_dict:
-                                full_image_urls[page_key] = image_urls_dict['full']
+                            # Page was split - add split page URLs
                             for key, url in image_urls_dict.items():
                                 if key != 'full':
                                     image_urls[key] = url
@@ -378,7 +380,7 @@ class GenerateImages:
     def _generate_single_image(
         self,
         prompt: str,
-        reference_image_bytes: Optional[bytes],
+        reference_images_bytes: Optional[List[bytes]],
         reference_page_image: Optional[str],
         gender: str,
         age: int,
@@ -484,13 +486,18 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 'model': self.model,
                 'prompt': enhanced_prompt,
                 'width': width,
-                'height': height
+                'height': height,
+                'watermark': False
             }
             
-            # Add reference image only if provided (page 0 only in sequential mode)
-            if reference_image_bytes:
-                reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
-                payload['reference_image'] = reference_image_base64
+            # Add reference images if provided (up to 3)
+            if reference_images_bytes and len(reference_images_bytes) > 0:
+                for idx, img_bytes in enumerate(reference_images_bytes[:3], 1):
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    if idx == 1:
+                        payload['reference_image'] = img_base64
+                    else:
+                        payload[f'reference_image_{idx}'] = img_base64
             
             # If there's a reference page (for sequential generation), include it as style reference
             # Prefer bytes over URL for efficiency - no need to download from our own server
@@ -584,33 +591,23 @@ Negative prompt: No changes to the character's face structure, facial proportion
             base_url = base_url.rstrip('/')
             full_image_url = f"{base_url}/{full_image_filename}"
             
-            # Check if splitting is disabled
-            if not should_split:
-                return {'full': full_image_url}
-            
-            # NEVER split cover page (page 0) or coloring pages (12, 13)
+            # NEVER split cover page (page 0), coloring pages (12, 13), or if splitting is disabled
             page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            is_coloring_page = page_num == 12 or page_num == 13
-            is_cover_page = page_key == 'page 0'
+            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
             
-            if is_cover_page:
-                # Cover page is never split
-                return {'full': full_image_url}
-            
-            if is_coloring_page:
-                # Coloring pages (12, 13) are not split, return them as pages 23, 24
+            if not should_split or is_single_page:
+                # For coloring pages (12, 13), return them as pages 23, 24
                 # Because pages 1-11 when split = pages 1-22
                 if page_num == 12:
                     return_key = 'page 23'
-                else:  # page_num == 13
+                elif page_num == 13:
                     return_key = 'page 24'
+                else:
+                    return_key = 'full'
                 
-                return {
-                    'full': full_image_url,
-                    return_key: full_image_url
-                }
+                return {return_key: full_image_url}
             
-            # Split the image in the middle for story pages (pages 1-11)
+            # Split the image in the middle for book pages
             # Left half: 0 to 2550 pixels (8.5" x 8.5")
             # Right half: 2550 to 5100 pixels (8.5" x 8.5")
             middle_x = target_width // 2  # 2550
