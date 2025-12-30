@@ -19,7 +19,7 @@ load_dotenv()
 class GenerateImages:
     def __init__(self):
         self.api_key = os.getenv("ARK_API_KEY")
-        self.model = "seedream-4-0-250828"
+        self.model = "seedream-4-5-251128"
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
         self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
 
@@ -418,26 +418,23 @@ The child's face, features, hair, and appearance must exactly match the referenc
                     # No text for coloring pages
                     text_instruction = ""
                 else:
+                    # Count words in the story text to emphasize completeness
+                    word_count = len(story_text.split()) if story_text else 0
+                    final_word = story_text.split()[-1] if story_text else ''
                     text_instruction = f"""
-CRITICAL TEXT RENDERING REQUIREMENT:
-You MUST include the COMPLETE text exactly as written below in the generated image. Do not truncate, shorten, or cut off any words.
-The ENTIRE text MUST be visible and readable in the image.
+COMPLETE TEXT TO RENDER IN IMAGE (every single word required):
 
-FULL TEXT TO RENDER (COMPLETE, NO TRUNCATION):
-"{story_text}"
+{story_text}
 
-TEXT PLACEMENT INSTRUCTIONS - DOUBLE PAGE SPREAD:
-IMPORTANT: This image is for a double-page spread (two pages side by side). The image is 17" wide (two 8.5" pages).
-- Place the text ONLY on the LEFT HALF of the image (the left 8.5" section)
-- The text should be contained within the LEFT PAGE only (left 50% of the image width)
-- Do NOT place text on the right half of the image
-- Position the text in a clear, readable area on the left page (top, middle, or bottom)
-- Use a clear, legible font size that fits the entire text within the left page area
-- Ensure ALL words from the beginning to the end are fully visible on the left page
-- The text must be complete from start to finish: "{story_text}"
-- If needed, use multiple lines to fit all the text within the left page, but ALL text must be included
-- Do NOT abbreviate, truncate, or use ellipsis (...) - render the FULL text
-- Keep the right half of the image (right page) for the illustration only, without any text
+TEXT MUST END WITH: "{final_word}"
+
+Requirements:
+- Use Comic Relief font style (playful, rounded)
+- Reduce font size if necessary to fit ALL {word_count} words
+- Use as many lines as needed to show the complete text
+- Place text on left or right side where there's open space
+- Do not cover character faces
+- Simple text overlay - no frames or boxes
 """ if story_text else ""
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
