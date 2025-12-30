@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 class GenerateImageRequest(BaseModel):
    prompt: Dict[str, str] = Field(description="Image generation prompts for each page")
@@ -7,6 +7,12 @@ class GenerateImageRequest(BaseModel):
    gender: str = Field(description="Child's gender")
    age: int = Field(description="Child's age")
    image_style: str = Field(description="Desired illustration style")
+
+class PageImageUrls(BaseModel):
+    name: str = Field(description="Page identifier (e.g., 'page 1')")
+    fullPageUrl: str = Field(description="Full original generated image URL")
+    leftUrl: Optional[str] = Field(default=None, description="Left half of split image URL")
+    rightUrl: Optional[str] = Field(default=None, description="Right half of split image URL")
    
 class GenerateImageResponse(BaseModel):
-    image_urls: Dict[str, str] = Field(description="Generated image URLs for each page")
+    image_urls: List[PageImageUrls] = Field(description="Generated image URLs for each page with full and split versions")

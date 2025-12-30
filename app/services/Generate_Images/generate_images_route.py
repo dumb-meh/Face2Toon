@@ -150,7 +150,12 @@ async def generate_images(
             story=story_dict,
             page_1_url=page_1_url
         )
-        return response
+        
+        # Wrap the response if it's already a list
+        if isinstance(response, GenerateImageResponse):
+            return response
+        else:
+            return GenerateImageResponse(image_urls=response)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

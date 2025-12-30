@@ -2,8 +2,8 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-from .generate_images_schema import GenerateImageResponse
-from typing import Dict, Optional
+from .generate_images_schema import GenerateImageResponse, PageImageUrls
+from typing import Dict, Optional, List
 from fastapi import UploadFile
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +19,7 @@ load_dotenv()
 class GenerateImages:
     def __init__(self):
         self.api_key = os.getenv("ARK_API_KEY")
-        self.model = "seedream-4-5-251128"
+        self.model = "seedream-4-0-250828"
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
         self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
 
@@ -60,7 +60,9 @@ class GenerateImages:
             should_split=False  # Don't split for first two pages
         )
         
-        return GenerateImageResponse(image_urls=image_urls)
+        # Convert dict to structured format
+        structured_urls = self._convert_dict_to_structured(image_urls)
+        return GenerateImageResponse(image_urls=structured_urls)
     
     def generate_images(
         self,
@@ -112,7 +114,9 @@ class GenerateImages:
             should_split=True  # Enable splitting for full generation
         )
         
-        return GenerateImageResponse(image_urls=image_urls)
+        # Convert dict to structured format
+        structured_urls = self._convert_dict_to_structured(image_urls)
+        return GenerateImageResponse(image_urls=structured_urls)
     
     def _generate_images_for_pages(
         self,
@@ -418,23 +422,26 @@ The child's face, features, hair, and appearance must exactly match the referenc
                     # No text for coloring pages
                     text_instruction = ""
                 else:
-                    # Count words in the story text to emphasize completeness
-                    word_count = len(story_text.split()) if story_text else 0
-                    final_word = story_text.split()[-1] if story_text else ''
                     text_instruction = f"""
-COMPLETE TEXT TO RENDER IN IMAGE (every single word required):
+CRITICAL TEXT RENDERING REQUIREMENT:
+You MUST include the COMPLETE text exactly as written below in the generated image. Do not truncate, shorten, or cut off any words.
+The ENTIRE text MUST be visible and readable in the image.
 
-{story_text}
+FULL TEXT TO RENDER (COMPLETE, NO TRUNCATION):
+"{story_text}"
 
-TEXT MUST END WITH: "{final_word}"
-
-Requirements:
-- Use Comic Relief font style (playful, rounded)
-- Reduce font size if necessary to fit ALL {word_count} words
-- Use as many lines as needed to show the complete text
-- Place text on left or right side where there's open space
-- Do not cover character faces
-- Simple text overlay - no frames or boxes
+TEXT PLACEMENT INSTRUCTIONS - DOUBLE PAGE SPREAD:
+IMPORTANT: This image is for a double-page spread (two pages side by side). The image is 17" wide (two 8.5" pages).
+- Place the text ONLY on the LEFT HALF of the image (the left 8.5" section)
+- The text should be contained within the LEFT PAGE only (left 50% of the image width)
+- Do NOT place text on the right half of the image
+- Position the text in a clear, readable area on the left page (top, middle, or bottom)
+- Use a clear, legible font size that fits the entire text within the left page area
+- Ensure ALL words from the beginning to the end are fully visible on the left page
+- The text must be complete from start to finish: "{story_text}"
+- If needed, use multiple lines to fit all the text within the left page, but ALL text must be included
+- Do NOT abbreviate, truncate, or use ellipsis (...) - render the FULL text
+- Keep the right half of the image (right page) for the illustration only, without any text
 """ if story_text else ""
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
@@ -627,3 +634,67 @@ Negative prompt: No changes to the character's face structure, facial proportion
             print(f"Error resizing image: {str(e)}")
             # Return original URL if resize fails
             return {'full': image_url}
+    
+    def _convert_dict_to_structured(self, image_urls: Dict[str, str]) -> List[PageImageUrls]:
+        """Convert flat dictionary to structured format with PageImageUrls objects"""
+        structured_pages = []
+        processed_pages = set()
+        
+        # Sort keys by page number
+        sorted_keys = sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if 'page' in x and x.split()[1].isdigit() else 0)
+        
+        for key in sorted_keys:
+            url = image_urls[key]
+            
+            if 'page' in key:
+                page_num_str = key.split()[1]
+                if page_num_str.isdigit():
+                    page_num = int(page_num_str)
+                    
+                    # Skip if already processed
+                    if page_num in processed_pages:
+                        continue
+                    
+                    # Check if this is part of a split pair (odd pages 1, 3, 5, etc. pair with even pages 2, 4, 6, etc.)
+                    if page_num % 2 == 1 and page_num > 0:
+                        right_page_num = page_num + 1
+                        right_key = f'page {right_page_num}'
+                        
+                        if right_key in image_urls:
+                            # This is a split page pair
+                            # Reconstruct which original page this came from
+                            # pages 1-2 come from page 1, pages 3-4 from page 2, etc.
+                            original_page_num = (page_num + 1) // 2
+                            
+                            page_obj = PageImageUrls(
+                                name=f"page {original_page_num}",
+                                fullPageUrl="",  # Will be empty for now since we don't track full URLs in non-split mode
+                                leftUrl=url,
+                                rightUrl=image_urls[right_key]
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(page_num)
+                            processed_pages.add(right_page_num)
+                        else:
+                            # Single page
+                            page_obj = PageImageUrls(
+                                name=key,
+                                fullPageUrl=url,
+                                leftUrl=None,
+                                rightUrl=None
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(page_num)
+                    elif page_num == 0 or page_num >= 23 or page_num % 2 == 0:
+                        # Cover page, coloring pages, or even numbered pages (if not already paired)
+                        if page_num not in processed_pages:
+                            page_obj = PageImageUrls(
+                                name=key,
+                                fullPageUrl=url,
+                                leftUrl=None,
+                                rightUrl=None
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(page_num)
+        
+        return structured_pages
