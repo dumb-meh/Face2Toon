@@ -47,7 +47,7 @@ class GenerateImages:
         # Force sequential if requested
         force_sequential = sequential.lower() == "yes"
         
-        image_urls = self._generate_images_for_pages(
+        image_urls, full_image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
             page_connections=page_connections if force_sequential else None,
@@ -57,11 +57,11 @@ class GenerateImages:
             force_sequential=force_sequential,
             story=story_to_generate,
             session_id=session_id,
-            should_split=False  # Don't split for first two pages
+            should_split=True  # Split page 1 into page 1 and page 2
         )
         
         # Convert dict to structured format
-        structured_urls = self._convert_dict_to_structured(image_urls)
+        structured_urls = self._convert_dict_to_structured(image_urls, full_image_urls)
         return GenerateImageResponse(image_urls=structured_urls)
     
     def generate_images(
@@ -100,7 +100,7 @@ class GenerateImages:
         
         # For parallel mode, ignore page_connections completely
         # For sequential mode, use page_connections
-        image_urls = self._generate_images_for_pages(
+        image_urls, full_image_urls = self._generate_images_for_pages(
             pages_to_generate,
             reference_image,
             page_connections if force_sequential else None,
@@ -115,7 +115,7 @@ class GenerateImages:
         )
         
         # Convert dict to structured format
-        structured_urls = self._convert_dict_to_structured(image_urls)
+        structured_urls = self._convert_dict_to_structured(image_urls, full_image_urls)
         return GenerateImageResponse(image_urls=structured_urls)
     
     def _generate_images_for_pages(
@@ -131,9 +131,11 @@ class GenerateImages:
         session_id: str = None,
         page_1_url: Optional[str] = None,
         should_split: bool = False
-    ) -> Dict[str, str]:
-        """Generate images for specified pages using SeeDream API"""
+    ) -> tuple[Dict[str, str], Dict[str, str]]:
+        """Generate images for specified pages using SeeDream API
+        Returns: (image_urls, full_image_urls)"""
         image_urls = {}
+        full_image_urls = {}  # Store full image URLs separately
         generated_images = {}  # Initialize for sequential generation
         generated_images_bytes = {}  # Store bytes for direct use
         story = story or {}
@@ -282,7 +284,9 @@ class GenerateImages:
                                 image_urls[key] = url
                                 print(f"  - {key}: {url}")
                     else:
-                        # Split pages - add individual page URLs
+                        # Split pages - add individual page URLs and store full URL
+                        if 'full' in image_urls_dict:
+                            full_image_urls[page_key] = image_urls_dict['full']
                         for key, url in image_urls_dict.items():
                             if key != 'full':
                                 image_urls[key] = url
@@ -342,7 +346,9 @@ class GenerateImages:
                         has_split_pages = any(key != 'full' for key in image_urls_dict.keys())
                         
                         if has_split_pages:
-                            # Page was split - add split page URLs
+                            # Page was split - add split page URLs and store full URL
+                            if 'full' in image_urls_dict:
+                                full_image_urls[page_key] = image_urls_dict['full']
                             for key, url in image_urls_dict.items():
                                 if key != 'full':
                                     image_urls[key] = url
@@ -367,7 +373,7 @@ class GenerateImages:
         for key in sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if x.split()[1].isdigit() else 0):
             print(f"  - {key}")
         
-        return image_urls
+        return image_urls, full_image_urls
     
     def _generate_single_image(
         self,
@@ -578,23 +584,33 @@ Negative prompt: No changes to the character's face structure, facial proportion
             base_url = base_url.rstrip('/')
             full_image_url = f"{base_url}/{full_image_filename}"
             
-            # NEVER split cover page (page 0), coloring pages (12, 13), or if splitting is disabled
-            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
+            # Check if splitting is disabled
+            if not should_split:
+                return {'full': full_image_url}
             
-            if not should_split or is_single_page:
-                # For coloring pages (12, 13), return them as pages 23, 24
+            # NEVER split cover page (page 0) or coloring pages (12, 13)
+            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+            is_coloring_page = page_num == 12 or page_num == 13
+            is_cover_page = page_key == 'page 0'
+            
+            if is_cover_page:
+                # Cover page is never split
+                return {'full': full_image_url}
+            
+            if is_coloring_page:
+                # Coloring pages (12, 13) are not split, return them as pages 23, 24
                 # Because pages 1-11 when split = pages 1-22
                 if page_num == 12:
                     return_key = 'page 23'
-                elif page_num == 13:
+                else:  # page_num == 13
                     return_key = 'page 24'
-                else:
-                    return_key = 'full'
                 
-                return {return_key: full_image_url}
+                return {
+                    'full': full_image_url,
+                    return_key: full_image_url
+                }
             
-            # Split the image in the middle for book pages
+            # Split the image in the middle for story pages (pages 1-11)
             # Left half: 0 to 2550 pixels (8.5" x 8.5")
             # Right half: 2550 to 5100 pixels (8.5" x 8.5")
             middle_x = target_width // 2  # 2550
@@ -635,7 +651,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
             # Return original URL if resize fails
             return {'full': image_url}
     
-    def _convert_dict_to_structured(self, image_urls: Dict[str, str]) -> List[PageImageUrls]:
+    def _convert_dict_to_structured(self, image_urls: Dict[str, str], full_image_urls: Dict[str, str]) -> List[PageImageUrls]:
         """Convert flat dictionary to structured format with PageImageUrls objects"""
         structured_pages = []
         processed_pages = set()
@@ -665,10 +681,14 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             # Reconstruct which original page this came from
                             # pages 1-2 come from page 1, pages 3-4 from page 2, etc.
                             original_page_num = (page_num + 1) // 2
+                            original_page_key = f'page {original_page_num}'
+                            
+                            # Get full URL from full_image_urls dict
+                            full_url = full_image_urls.get(original_page_key, "")
                             
                             page_obj = PageImageUrls(
-                                name=f"page {original_page_num}",
-                                fullPageUrl="",  # Will be empty for now since we don't track full URLs in non-split mode
+                                name=original_page_key,
+                                fullPageUrl=full_url,
                                 leftUrl=url,
                                 rightUrl=image_urls[right_key]
                             )
