@@ -9,3 +9,4 @@ aiofiles
 byteplus-sdk
 openai
 boto3
+reportlab

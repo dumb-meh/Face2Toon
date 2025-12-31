@@ -14,6 +14,9 @@ from urllib.parse import urljoin
 import uuid
 from datetime import datetime
 from app.utils.upload_to_bucket import upload_file_to_s3, upload_file_object_to_s3
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
 
 load_dotenv()
 
@@ -48,7 +51,7 @@ class GenerateImages:
         # Force sequential if requested
         force_sequential = sequential.lower() == "yes"
         
-        image_urls, full_image_urls = self._generate_images_for_pages(
+        image_urls, full_image_urls, _ = self._generate_images_for_pages(
             pages_to_generate,
             reference_images,
             page_connections=page_connections if force_sequential else None,
@@ -104,7 +107,7 @@ class GenerateImages:
         
         # For parallel mode, ignore page_connections completely
         # For sequential mode, use page_connections
-        image_urls, full_image_urls = self._generate_images_for_pages(
+        image_urls, full_image_urls, image_bytes = self._generate_images_for_pages(
             pages_to_generate,
             reference_images,
             page_connections if force_sequential else None,
@@ -123,7 +126,16 @@ class GenerateImages:
         
         # Convert dict to structured format
         structured_urls = self._convert_dict_to_structured(image_urls, full_image_urls)
-        return GenerateImageResponse(image_urls=structured_urls)
+        
+        # Generate PDF with all pages
+        pdf_url = self._generate_pdf(
+            image_bytes=image_bytes,
+            book_uuid=book_uuid,
+            session_id=session_id,
+            upload_to_s3=True
+        )
+        
+        return GenerateImageResponse(image_urls=structured_urls, pdf_url=pdf_url)
     
     def _generate_images_for_pages(
         self,
@@ -141,11 +153,12 @@ class GenerateImages:
         should_split: bool = False,
         upload_to_s3: bool = False,
         book_uuid: str = None
-    ) -> tuple[Dict[str, str], Dict[str, str]]:
+    ) -> tuple[Dict[str, str], Dict[str, str], Dict[str, bytes]]:
         """Generate images for specified pages using SeeDream API
-        Returns: (image_urls, full_image_urls)"""
+        Returns: (image_urls, full_image_urls, image_bytes)"""
         image_urls = {}
         full_image_urls = {}  # Store full image URLs separately
+        image_bytes_for_pdf = {}  # Store image bytes for PDF generation
         generated_images = {}  # Initialize for sequential generation
         generated_images_bytes = {}  # Store bytes for direct use
         story = story or {}
@@ -190,6 +203,7 @@ class GenerateImages:
                     
                     if upload_result['success']:
                         image_urls['page 0'] = upload_result['url']
+                        image_bytes_for_pdf['page 0'] = page_0_bytes
                         print(f"Uploaded page 0 to S3: {upload_result['url']}")
                     else:
                         print(f"Failed to upload page 0 to S3: {upload_result['message']}")
@@ -248,6 +262,11 @@ class GenerateImages:
                         if left_result['success'] and right_result['success']:
                             image_urls['page 1'] = left_result['url']
                             image_urls['page 2'] = right_result['url']
+                            # Store bytes for PDF
+                            left_buffer.seek(0)
+                            right_buffer.seek(0)
+                            image_bytes_for_pdf['page 1'] = left_buffer.read()
+                            image_bytes_for_pdf['page 2'] = right_buffer.read()
                             print(f"Uploaded split page 1 to S3")
                             print(f"  - page 1: {left_result['url']}")
                             print(f"  - page 2: {right_result['url']}")
@@ -359,6 +378,29 @@ class GenerateImages:
                 if 'full_bytes' in image_urls_dict:
                     generated_images_bytes[page_key] = image_urls_dict['full_bytes']
                 
+                # Store bytes for PDF generation
+                if should_split and page_key != 'page 0':
+                    # For split pages, store the left and right halves
+                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                    is_coloring_page = page_num == 12 or page_num == 13
+                    
+                    if not is_coloring_page:
+                        # Extract split page bytes
+                        for key in image_urls_dict.keys():
+                            if key.startswith('page ') and key != 'full' and key != 'full_bytes':
+                                if f'{key}_bytes' in image_urls_dict:
+                                    image_bytes_for_pdf[key] = image_urls_dict[f'{key}_bytes']
+                    else:
+                        # Coloring pages - store with their actual key (page 23, 24)
+                        if 'full_bytes' in image_urls_dict:
+                            for key in image_urls_dict.keys():
+                                if key.startswith('page ') and key != 'full':
+                                    image_bytes_for_pdf[key] = image_urls_dict['full_bytes']
+                else:
+                    # Cover page or non-split page
+                    if 'full_bytes' in image_urls_dict:
+                        image_bytes_for_pdf[page_key] = image_urls_dict['full_bytes']
+                
                 # Add URLs to response based on whether page is split
                 if should_split and page_key != 'page 0':
                     # Check if page was actually split or returned with a different key
@@ -461,7 +503,7 @@ class GenerateImages:
         for key in sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if x.split()[1].isdigit() else 0):
             print(f"  - {key}")
         
-        return image_urls, full_image_urls
+        return image_urls, full_image_urls, image_bytes_for_pdf
     
     def _generate_single_image(
         self,
@@ -739,6 +781,12 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 left_buffer.seek(0)
                 right_buffer.seek(0)
                 
+                # Read bytes for PDF before uploading
+                left_bytes = left_buffer.read()
+                right_bytes = right_buffer.read()
+                left_buffer.seek(0)  # Reset for upload
+                right_buffer.seek(0)
+                
                 left_object_name = f"facetoon/{book_uuid}/splitted/page_{left_page_num}.png"
                 right_object_name = f"facetoon/{book_uuid}/splitted/page_{right_page_num}.png"
                 
@@ -765,6 +813,16 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 left_half.save(left_filename, format='PNG', dpi=(dpi, dpi))
                 right_half.save(right_filename, format='PNG', dpi=(dpi, dpi))
                 
+                # Read bytes for PDF
+                left_buffer = io.BytesIO()
+                right_buffer = io.BytesIO()
+                left_half.save(left_buffer, format='PNG', dpi=(dpi, dpi))
+                right_half.save(right_buffer, format='PNG', dpi=(dpi, dpi))
+                left_buffer.seek(0)
+                right_buffer.seek(0)
+                left_bytes = left_buffer.read()
+                right_bytes = right_buffer.read()
+                
                 print(f"  - Split into page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
                 
                 base_url = os.getenv('domain') or os.getenv('BASE_URL')
@@ -776,7 +834,9 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 'full': full_image_url,
                 'full_bytes': full_image_bytes_data,
                 f'page {left_page_num}': left_url,
-                f'page {right_page_num}': right_url
+                f'page {right_page_num}': right_url,
+                f'page {left_page_num}_bytes': left_bytes,
+                f'page {right_page_num}_bytes': right_bytes
             }
             
         except Exception as e:
@@ -851,3 +911,127 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             processed_pages.add(page_num)
         
         return structured_pages
+    
+    def _generate_pdf(
+        self,
+        image_bytes: Dict[str, bytes],
+        book_uuid: str,
+        session_id: str,
+        upload_to_s3: bool = False
+    ) -> Optional[str]:
+        """Generate a PDF book with cover, logo, and all pages
+        Each page is 8.5\" x 8.5\" at 300 DPI"""
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas as pdf_canvas
+            from reportlab.lib.utils import ImageReader
+            
+            # Page size: 8.5" x 8.5" at 72 points per inch
+            page_size = (8.5 * 72, 8.5 * 72)  # 612 x 612 points
+            
+            # Create PDF in memory
+            pdf_buffer = io.BytesIO()
+            c = pdf_canvas.Canvas(pdf_buffer, pagesize=page_size)
+            
+            # Sort pages by number
+            sorted_pages = sorted(
+                [(k, v) for k, v in image_bytes.items() if k.startswith('page ')],
+                key=lambda x: int(x[0].split()[1])
+            )
+            
+            print(f"\\nGenerating PDF with {len(sorted_pages)} pages + logo page...")
+            
+            # Add each page to PDF
+            for page_key, page_bytes in sorted_pages:
+                try:
+                    # Open image from bytes
+                    img = Image.open(io.BytesIO(page_bytes))
+                    
+                    # Convert to RGB if needed (PDF doesn't support RGBA)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Resize to 8.5\" x 8.5\" at 72 DPI for PDF
+                    img = img.resize((612, 612), Image.Resampling.LANCZOS)
+                    
+                    # Convert to ImageReader for reportlab
+                    img_buffer = io.BytesIO()
+                    img.save(img_buffer, format='PNG')
+                    img_buffer.seek(0)
+                    img_reader = ImageReader(img_buffer)
+                    
+                    # Draw image on PDF page
+                    c.drawImage(img_reader, 0, 0, width=612, height=612)
+                    c.showPage()
+                    
+                    print(f"  - Added {page_key} to PDF")
+                    
+                    # Add logo page after cover (page 0)
+                    if page_key == 'page 0':
+                        try:
+                            logo_path = 'Logo.png'
+                            if os.path.exists(logo_path):
+                                logo_img = Image.open(logo_path)
+                                
+                                # Convert to RGB if needed
+                                if logo_img.mode != 'RGB':
+                                    logo_img = logo_img.convert('RGB')
+                                
+                                # Resize to fit page
+                                logo_img = logo_img.resize((612, 612), Image.Resampling.LANCZOS)
+                                
+                                # Convert to ImageReader
+                                logo_buffer = io.BytesIO()
+                                logo_img.save(logo_buffer, format='PNG')
+                                logo_buffer.seek(0)
+                                logo_reader = ImageReader(logo_buffer)
+                                
+                                # Draw logo page
+                                c.drawImage(logo_reader, 0, 0, width=612, height=612)
+                                c.showPage()
+                                
+                                print(f"  - Added Logo page to PDF")
+                            else:
+                                print(f"  - Warning: Logo.png not found in root folder")
+                        except Exception as e:
+                            print(f"  - Error adding logo page: {str(e)}")
+                    
+                except Exception as e:
+                    print(f"Error adding {page_key} to PDF: {str(e)}")
+                    continue
+            
+            # Save PDF
+            c.save()
+            pdf_buffer.seek(0)
+            
+            # Upload to S3 or save locally
+            if upload_to_s3:
+                pdf_object_name = f"facetoon/{book_uuid}/book_{session_id}.pdf"
+                upload_result = upload_file_object_to_s3(pdf_buffer, object_name=pdf_object_name)
+                
+                if upload_result['success']:
+                    print(f"\nPDF uploaded to S3: {upload_result['url']}")
+                    return upload_result['url']
+                else:
+                    print(f"Failed to upload PDF to S3: {upload_result['message']}")
+                    return None
+            else:
+                # Save locally
+                os.makedirs('uploads/generated_pdfs', exist_ok=True)
+                pdf_filename = f"uploads/generated_pdfs/{session_id}_book.pdf"
+                
+                with open(pdf_filename, 'wb') as f:
+                    f.write(pdf_buffer.read())
+                
+                base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                base_url = base_url.rstrip('/')
+                pdf_url = f"{base_url}/{pdf_filename}"
+                
+                print(f"\nPDF saved locally: {pdf_url}")
+                return pdf_url
+                
+        except Exception as e:
+            print(f"Error generating PDF: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None

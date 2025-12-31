@@ -16,3 +16,4 @@ class PageImageUrls(BaseModel):
    
 class GenerateImageResponse(BaseModel):
     image_urls: List[PageImageUrls] = Field(description="Generated image URLs for each page with full and split versions")
+    pdf_url: Optional[str] = Field(default=None, description="URL of the generated PDF book")
