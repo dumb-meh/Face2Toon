@@ -13,6 +13,7 @@ import base64
 from urllib.parse import urljoin
 import uuid
 from datetime import datetime
+from app.utils.upload_to_bucket import upload_file_to_s3, upload_file_object_to_s3
 
 load_dotenv()
 
@@ -75,11 +76,14 @@ class GenerateImages:
         coverpage: str = "no",
         sequential: str = "no",
         story: Optional[Dict[str, str]] = None,
+        page_0_url: Optional[str] = None,
         page_1_url: Optional[str] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
         # Generate unique session ID for this request
         session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        # Generate unique book UUID for S3 directory structure
+        book_uuid = str(uuid.uuid4())
         
         # Determine which pages to generate
         if coverpage.lower() == "yes":
@@ -110,8 +114,11 @@ class GenerateImages:
             force_sequential=force_sequential,
             story=story_to_generate,
             session_id=session_id,
+            page_0_url=page_0_url,
             page_1_url=page_1_url,
-            should_split=True  # Enable splitting for full generation
+            should_split=True,  # Enable splitting for full generation
+            upload_to_s3=True,  # Upload to S3 for full generation
+            book_uuid=book_uuid
         )
         
         # Convert dict to structured format
@@ -129,8 +136,11 @@ class GenerateImages:
         force_sequential: bool = False,
         story: Optional[Dict[str, str]] = None,
         session_id: str = None,
+        page_0_url: Optional[str] = None,
         page_1_url: Optional[str] = None,
-        should_split: bool = False
+        should_split: bool = False,
+        upload_to_s3: bool = False,
+        book_uuid: str = None
     ) -> tuple[Dict[str, str], Dict[str, str]]:
         """Generate images for specified pages using SeeDream API
         Returns: (image_urls, full_image_urls)"""
@@ -153,10 +163,43 @@ class GenerateImages:
                 ref_img.file.seek(0)  # Reset file pointer
                 reference_images_bytes_list.append(img_bytes)
         
-        # If page_1_url is provided, read the image from disk and split it
+        # Handle page_0_url if provided - upload to S3
+        if page_0_url and upload_to_s3:
+            try:
+                # Extract filename from URL and read from local uploads folder
+                if page_0_url.startswith('http'):
+                    from urllib.parse import urlparse
+                    parsed = urlparse(page_0_url)
+                    file_path = parsed.path.lstrip('/')
+                else:
+                    file_path = page_0_url.lstrip('/')
+                
+                # Read the image file directly from local disk
+                if os.path.exists(file_path):
+                    with open(file_path, 'rb') as f:
+                        page_0_bytes = f.read()
+                else:
+                    print(f"Warning: Page 0 image not found at: {file_path}")
+                    page_0_bytes = None
+                
+                if page_0_bytes:
+                    # Upload to S3
+                    page_0_object_name = f"facetoon/{book_uuid}/page_0.png"
+                    page_0_buffer = io.BytesIO(page_0_bytes)
+                    upload_result = upload_file_object_to_s3(page_0_buffer, object_name=page_0_object_name)
+                    
+                    if upload_result['success']:
+                        image_urls['page 0'] = upload_result['url']
+                        print(f"Uploaded page 0 to S3: {upload_result['url']}")
+                    else:
+                        print(f"Failed to upload page 0 to S3: {upload_result['message']}")
+            except Exception as e:
+                print(f"Error processing page 0 URL: {str(e)}")
+        
+        # If page_1_url is provided, read the image from local disk and split it
         if page_1_url and should_split:
             try:
-                # Extract file path from URL
+                # Extract filename from URL and read from local uploads folder
                 if page_1_url.startswith('http'):
                     from urllib.parse import urlparse
                     parsed = urlparse(page_1_url)
@@ -164,7 +207,7 @@ class GenerateImages:
                 else:
                     file_path = page_1_url.lstrip('/')
                 
-                # Read the image file directly from disk
+                # Read the image file directly from local disk
                 if os.path.exists(file_path):
                     with open(file_path, 'rb') as f:
                         page_1_bytes = f.read()
@@ -178,22 +221,56 @@ class GenerateImages:
                     left_half = img.crop((0, 0, middle_x, img.height))
                     right_half = img.crop((middle_x, 0, img.width, img.height))
                     
-                    os.makedirs('uploads/generated_images/splitted', exist_ok=True)
-                    left_filename = f"uploads/generated_images/splitted/{session_id}_page_1.png"
-                    right_filename = f"uploads/generated_images/splitted/{session_id}_page_2.png"
-                    
-                    left_half.save(left_filename, format='PNG', dpi=(300, 300))
-                    right_half.save(right_filename, format='PNG', dpi=(300, 300))
-                    
-                    base_url = os.getenv('domain') or os.getenv('BASE_URL')
-                    base_url = base_url.rstrip('/')
-                    
-                    image_urls['page 1'] = f"{base_url}/{left_filename}"
-                    image_urls['page 2'] = f"{base_url}/{right_filename}"
-                    
-                    print(f"Split provided page 1 into page 1 and page 2")
-                    print(f"  - page 1: {image_urls['page 1']}")
-                    print(f"  - page 2: {image_urls['page 2']}")
+                    if upload_to_s3:
+                        # Upload full page 1 image to S3 first
+                        full_page_1_buffer = io.BytesIO(page_1_bytes)
+                        full_page_1_object_name = f"facetoon/{book_uuid}/full/image_1.png"
+                        full_page_1_result = upload_file_object_to_s3(full_page_1_buffer, object_name=full_page_1_object_name)
+                        
+                        if full_page_1_result['success']:
+                            full_image_urls['page 1'] = full_page_1_result['url']
+                            print(f"Uploaded full page 1 to S3: {full_page_1_result['url']}")
+                        
+                        # Upload split images to S3
+                        left_buffer = io.BytesIO()
+                        right_buffer = io.BytesIO()
+                        left_half.save(left_buffer, format='PNG', dpi=(300, 300))
+                        right_half.save(right_buffer, format='PNG', dpi=(300, 300))
+                        left_buffer.seek(0)
+                        right_buffer.seek(0)
+                        
+                        left_object_name = f"facetoon/{book_uuid}/splitted/page_1.png"
+                        right_object_name = f"facetoon/{book_uuid}/splitted/page_2.png"
+                        
+                        left_result = upload_file_object_to_s3(left_buffer, object_name=left_object_name)
+                        right_result = upload_file_object_to_s3(right_buffer, object_name=right_object_name)
+                        
+                        if left_result['success'] and right_result['success']:
+                            image_urls['page 1'] = left_result['url']
+                            image_urls['page 2'] = right_result['url']
+                            print(f"Uploaded split page 1 to S3")
+                            print(f"  - page 1: {left_result['url']}")
+                            print(f"  - page 2: {right_result['url']}")
+                        else:
+                            print(f"Failed to upload split pages to S3")
+                    else:
+                        # Save locally
+                        os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                        left_filename = f"uploads/generated_images/splitted/{session_id}_page_1.png"
+                        right_filename = f"uploads/generated_images/splitted/{session_id}_page_2.png"
+                        
+                        left_half.save(left_filename, format='PNG', dpi=(300, 300))
+                        right_half.save(right_filename, format='PNG', dpi=(300, 300))
+                        
+                        base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                        base_url = base_url.rstrip('/')
+                        
+                        image_urls['page 1'] = f"{base_url}/{left_filename}"
+                        image_urls['page 2'] = f"{base_url}/{right_filename}"
+                        
+                        print(f"Split provided page 1 into page 1 and page 2")
+                        print(f"  - page 1: {image_urls['page 1']}")
+                        print(f"  - page 2: {image_urls['page 2']}")
                     
                     page_counter_start = 1  # Next generated image will be image 1 (pages 3-4)
                 else:
@@ -245,7 +322,7 @@ class GenerateImages:
                 # Debug logging
                 print(f"Generating {page_key}:")
                 print(f"  - Using raw image: {use_raw_image}")
-                print(f"  - Reference page bytes: {len(reference_page_bytes) if reference_page_bytes else 0} bytes")
+                print(f"  - Has reference bytes: {bool(reference_page_bytes)}")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 print(f"  - Page number for splitting: {current_page_number}")
                 
@@ -261,10 +338,12 @@ class GenerateImages:
                     session_id,
                     reference_page_bytes=reference_page_bytes,
                     should_split=should_split,
-                    page_number=current_page_number
+                    page_number=current_page_number,
+                    upload_to_s3=upload_to_s3,
+                    book_uuid=book_uuid
                 )
                 
-                # Store full URL for AI reference in next pages
+                # Store full URL and bytes for AI reference in next pages
                 # For pages with custom keys (coloring pages), get the actual URL value
                 if 'full' in image_urls_dict:
                     generated_images[page_key] = image_urls_dict['full']
@@ -275,6 +354,11 @@ class GenerateImages:
                     generated_images[page_key] = url_value
                     print(f"  - Generated URL: {url_value}")
                 
+                # Store the generated image bytes for next page reference
+                # Download the full image and store bytes for sequential generation
+                if 'full_bytes' in image_urls_dict:
+                    generated_images_bytes[page_key] = image_urls_dict['full_bytes']
+                
                 # Add URLs to response based on whether page is split
                 if should_split and page_key != 'page 0':
                     # Check if page was actually split or returned with a different key
@@ -284,7 +368,7 @@ class GenerateImages:
                     if is_coloring_page:
                         # Coloring pages are not split, add with their custom key (page 23, 24)
                         for key, url in image_urls_dict.items():
-                            if key != 'full':
+                            if key != 'full' and key != 'full_bytes':
                                 image_urls[key] = url
                                 print(f"  - {key}: {url}")
                     else:
@@ -292,7 +376,7 @@ class GenerateImages:
                         if 'full' in image_urls_dict:
                             full_image_urls[page_key] = image_urls_dict['full']
                         for key, url in image_urls_dict.items():
-                            if key != 'full':
+                            if key != 'full' and key != 'full_bytes':
                                 image_urls[key] = url
                                 print(f"  - {key}: {url}")
                         page_counter += 1  # Increment for next image
@@ -337,7 +421,9 @@ class GenerateImages:
                         story.get(page_key),
                         session_id,
                         should_split=should_split,
-                        page_number=page_num_for_split
+                        page_number=page_num_for_split,
+                        upload_to_s3=upload_to_s3,
+                        book_uuid=book_uuid
                     )
                     futures[future] = page_key
                 
@@ -352,18 +438,18 @@ class GenerateImages:
                         if has_split_pages:
                             # Page was split - add split page URLs
                             for key, url in image_urls_dict.items():
-                                if key != 'full':
+                                if key != 'full' and key != 'full_bytes':
                                     image_urls[key] = url
                                     print(f"  - {key}: {url}")
                         else:
                             # Page was not split (page 0, coloring pages, or splitting disabled)
                             # Check if dict has a specific key (like 'page 23' for coloring pages)
                             for key, url in image_urls_dict.items():
-                                if key != 'full':
+                                if key != 'full' and key != 'full_bytes':
                                     # Use the specific key (e.g., 'page 23', 'page 24')
                                     image_urls[key] = url
                                     print(f"  - {key}: {url}")
-                                else:
+                                elif key == 'full':
                                     # No specific key, use original page_key
                                     image_urls[page_key] = url
                                     print(f"  - {page_key}: {url}")
@@ -390,7 +476,9 @@ class GenerateImages:
         session_id: str = None,
         reference_page_bytes: Optional[bytes] = None,
         should_split: bool = False,
-        page_number: int = None
+        page_number: int = None,
+        upload_to_s3: bool = False,
+        book_uuid: str = None
     ) -> Dict[str, str]:
         """Generate a single image using SeeDream API"""
         try:
@@ -504,7 +592,6 @@ Negative prompt: No changes to the character's face structure, facial proportion
             if reference_page_bytes:
                 reference_page_base64 = base64.b64encode(reference_page_bytes).decode('utf-8')
                 payload['style_reference_image'] = reference_page_base64
-                print(f"  - Using reference page bytes directly ({len(reference_page_bytes)} bytes)")
             elif reference_page_image:
                 payload['style_reference_url'] = reference_page_image
                 print(f"  - Using reference page URL: {reference_page_image}")
@@ -527,7 +614,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 raise Exception(f"No image URL in response: {result}")
             
             # Download and resize image to final dimensions, optionally split
-            image_urls_dict = self._resize_image_to_print_size(image_url, page_key, session_id, should_split, page_number)
+            image_urls_dict = self._resize_image_to_print_size(image_url, page_key, session_id, should_split, page_number, upload_to_s3, book_uuid)
             
             # Return the dict containing full URL and optionally split page URLs
             return image_urls_dict
@@ -536,11 +623,12 @@ Negative prompt: No changes to the character's face structure, facial proportion
             print(f"Error calling SeeDream API: {str(e)}")
             raise
     
-    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str, should_split: bool = False, page_number: int = None) -> Dict[str, str]:
+    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str, should_split: bool = False, page_number: int = None, upload_to_s3: bool = False, book_uuid: str = None) -> Dict[str, str]:
         """Download image and resize to exact physical dimensions
         Pages 0, 12, 13: 8.5" x 8.5" at 300 DPI (cover and coloring pages)
         Other pages: 17" width x 8.5" height at 300 DPI
-        If should_split=True and page_key != 'page 0', split the image in the middle and save both halves as separate pages"""
+        If should_split=True and page_key != 'page 0', split the image in the middle and save both halves as separate pages
+        If upload_to_s3=True, upload images to S3 in facetoon/{book_uuid}/ directory"""
         try:
             # Download the image from Seedream
             response = requests.get(image_url, timeout=60)
@@ -575,21 +663,41 @@ Negative prompt: No changes to the character's face structure, facial proportion
             # Using LANCZOS for high-quality resizing
             resized_img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             
-            # Save full image to uploads directory with proper DPI metadata
-            os.makedirs('uploads/generated_images', exist_ok=True)
             page_num_str = page_key.replace('page ', '').replace(' ', '_')
-            # Use session_id to make filename unique
-            full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
             
-            # Save full image with DPI information embedded
-            resized_img.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
+            # Store full image bytes for sequential generation reference
+            full_image_bytes = io.BytesIO()
+            resized_img.save(full_image_bytes, format='PNG', dpi=(dpi, dpi))
+            full_image_bytes.seek(0)
+            full_image_bytes_data = full_image_bytes.read()
+            full_image_bytes.seek(0)  # Reset for upload
             
-            print(f"Saved {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
-            
-            # Construct base URL
-            base_url = os.getenv('domain') or os.getenv('BASE_URL')
-            base_url = base_url.rstrip('/')
-            full_image_url = f"{base_url}/{full_image_filename}"
+            if upload_to_s3:
+                # Upload full image to S3
+                full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
+                upload_result = upload_file_object_to_s3(full_image_bytes, object_name=full_object_name)
+                
+                if upload_result['success']:
+                    full_image_url = upload_result['url']
+                    print(f"Uploaded {page_key} to S3: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
+                else:
+                    print(f"Failed to upload {page_key} to S3: {upload_result['message']}")
+                    # Fallback to original URL
+                    full_image_url = image_url
+            else:
+                # Save full image to uploads directory with proper DPI metadata
+                os.makedirs('uploads/generated_images', exist_ok=True)
+                full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
+                
+                # Save full image with DPI information embedded
+                resized_img.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
+                
+                print(f"Saved {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
+                
+                # Construct base URL
+                base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                base_url = base_url.rstrip('/')
+                full_image_url = f"{base_url}/{full_image_filename}"
             
             # NEVER split cover page (page 0), coloring pages (12, 13), or if splitting is disabled
             page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
@@ -605,7 +713,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 else:
                     return_key = 'full'
                 
-                return {return_key: full_image_url}
+                return {return_key: full_image_url, 'full_bytes': full_image_bytes_data}
             
             # Split the image in the middle for book pages
             # Left half: 0 to 2550 pixels (8.5" x 8.5")
@@ -615,9 +723,6 @@ Negative prompt: No changes to the character's face structure, facial proportion
             left_half = resized_img.crop((0, 0, middle_x, target_height))
             right_half = resized_img.crop((middle_x, 0, target_width, target_height))
             
-            # Create splitted directory
-            os.makedirs('uploads/generated_images/splitted', exist_ok=True)
-            
             # Calculate page numbers: each image becomes 2 pages
             # page_number is the image number (0, 1, 2, 3...)
             # Image 1 -> page 1, page 2
@@ -625,20 +730,51 @@ Negative prompt: No changes to the character's face structure, facial proportion
             left_page_num = (page_number * 2) + 1
             right_page_num = (page_number * 2) + 2
             
-            # Save split images
-            left_filename = f"uploads/generated_images/splitted/{session_id}_page_{left_page_num}.png"
-            right_filename = f"uploads/generated_images/splitted/{session_id}_page_{right_page_num}.png"
-            
-            left_half.save(left_filename, format='PNG', dpi=(dpi, dpi))
-            right_half.save(right_filename, format='PNG', dpi=(dpi, dpi))
-            
-            print(f"  - Split into page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
-            
-            left_url = f"{base_url}/{left_filename}"
-            right_url = f"{base_url}/{right_filename}"
+            if upload_to_s3:
+                # Upload split images to S3
+                left_buffer = io.BytesIO()
+                right_buffer = io.BytesIO()
+                left_half.save(left_buffer, format='PNG', dpi=(dpi, dpi))
+                right_half.save(right_buffer, format='PNG', dpi=(dpi, dpi))
+                left_buffer.seek(0)
+                right_buffer.seek(0)
+                
+                left_object_name = f"facetoon/{book_uuid}/splitted/page_{left_page_num}.png"
+                right_object_name = f"facetoon/{book_uuid}/splitted/page_{right_page_num}.png"
+                
+                left_result = upload_file_object_to_s3(left_buffer, object_name=left_object_name)
+                right_result = upload_file_object_to_s3(right_buffer, object_name=right_object_name)
+                
+                if left_result['success'] and right_result['success']:
+                    left_url = left_result['url']
+                    right_url = right_result['url']
+                    print(f"  - Split and uploaded to S3: page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
+                else:
+                    print(f"  - Failed to upload split images to S3")
+                    # Fallback to full image URL
+                    left_url = full_image_url
+                    right_url = full_image_url
+            else:
+                # Create splitted directory
+                os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                
+                # Save split images
+                left_filename = f"uploads/generated_images/splitted/{session_id}_page_{left_page_num}.png"
+                right_filename = f"uploads/generated_images/splitted/{session_id}_page_{right_page_num}.png"
+                
+                left_half.save(left_filename, format='PNG', dpi=(dpi, dpi))
+                right_half.save(right_filename, format='PNG', dpi=(dpi, dpi))
+                
+                print(f"  - Split into page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
+                
+                base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                base_url = base_url.rstrip('/')
+                left_url = f"{base_url}/{left_filename}"
+                right_url = f"{base_url}/{right_filename}"
             
             return {
                 'full': full_image_url,
+                'full_bytes': full_image_bytes_data,
                 f'page {left_page_num}': left_url,
                 f'page {right_page_num}': right_url
             }

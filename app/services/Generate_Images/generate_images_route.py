@@ -34,7 +34,15 @@ async def generate_first_two_page(
             raise HTTPException(status_code=400, detail=f"Invalid prompt JSON format: {str(e)}")
         
         try:
-            page_connections_dict = json.loads(page_connections) if (page_connections and isinstance(page_connections, str)) else page_connections
+            # Handle case where page_connections is "string" or other placeholder text
+            if page_connections and isinstance(page_connections, str):
+                # Skip parsing if it's a placeholder like "string"
+                if page_connections.strip().lower() in ['string', 'null', 'none', '']:
+                    page_connections_dict = None
+                else:
+                    page_connections_dict = json.loads(page_connections)
+            else:
+                page_connections_dict = page_connections
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid page_connections JSON format: {str(e)}")
         
@@ -119,7 +127,15 @@ async def generate_images(
             raise HTTPException(status_code=400, detail=f"Invalid prompt JSON format: {str(e)}")
         
         try:
-            page_connections_dict = json.loads(page_connections) if (page_connections and isinstance(page_connections, str)) else page_connections
+            # Handle case where page_connections is "string" or other placeholder text
+            if page_connections and isinstance(page_connections, str):
+                # Skip parsing if it's a placeholder like "string"
+                if page_connections.strip().lower() in ['string', 'null', 'none', '']:
+                    page_connections_dict = None
+                else:
+                    page_connections_dict = json.loads(page_connections)
+            else:
+                page_connections_dict = page_connections
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid page_connections JSON format: {str(e)}")
         
@@ -170,6 +186,7 @@ async def generate_images(
             coverpage=coverpage,
             sequential=sequential,
             story=story_dict,
+            page_0_url=page_0_url,
             page_1_url=page_1_url
         )
         
