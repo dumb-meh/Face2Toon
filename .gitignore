@@ -3,8 +3,6 @@
 .env.local
 .env.production
 .env.staging
-Logo.png
-Logo_2.png
 
 # Python
 __pycache__/
