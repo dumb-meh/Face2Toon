@@ -17,6 +17,9 @@ from app.utils.upload_to_bucket import upload_file_to_s3, upload_file_object_to_
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas as pdf_canvas
+from reportlab.lib.utils import ImageReader
 
 load_dotenv()
 
@@ -922,9 +925,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
         """Generate a PDF book with cover, logo, and all pages
         Each page is 8.5\" x 8.5\" at 300 DPI"""
         try:
-            from reportlab.lib.pagesizes import letter
-            from reportlab.pdfgen import canvas as pdf_canvas
-            from reportlab.lib.utils import ImageReader
+            
             
             # Page size: 8.5" x 8.5" at 72 points per inch
             page_size = (8.5 * 72, 8.5 * 72)  # 612 x 612 points
