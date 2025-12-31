@@ -344,7 +344,6 @@ class GenerateImages:
                 # Debug logging
                 print(f"Generating {page_key}:")
                 print(f"  - Using raw image: {use_raw_image}")
-                print(f"  - Has reference bytes: {bool(reference_page_bytes)}")
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 print(f"  - Page number for splitting: {current_page_number}")
                 
@@ -996,6 +995,35 @@ Negative prompt: No changes to the character's face structure, facial proportion
                                 print(f"  - Warning: Logo.png not found in root folder")
                         except Exception as e:
                             print(f"  - Error adding logo page: {str(e)}")
+                        
+                        # Add second logo page (Logo_2.png)
+                        try:
+                            logo_2_path = 'Logo_2.png'
+                            if os.path.exists(logo_2_path):
+                                logo_2_img = Image.open(logo_2_path)
+                                
+                                # Convert to RGB if needed
+                                if logo_2_img.mode != 'RGB':
+                                    logo_2_img = logo_2_img.convert('RGB')
+                                
+                                # Resize to fit page
+                                logo_2_img = logo_2_img.resize((612, 612), Image.Resampling.LANCZOS)
+                                
+                                # Convert to ImageReader
+                                logo_2_buffer = io.BytesIO()
+                                logo_2_img.save(logo_2_buffer, format='PNG')
+                                logo_2_buffer.seek(0)
+                                logo_2_reader = ImageReader(logo_2_buffer)
+                                
+                                # Draw second logo page
+                                c.drawImage(logo_2_reader, 0, 0, width=612, height=612)
+                                c.showPage()
+                                
+                                print(f"  - Added Logo_2 page to PDF")
+                            else:
+                                print(f"  - Warning: Logo_2.png not found in root folder")
+                        except Exception as e:
+                            print(f"  - Error adding logo_2 page: {str(e)}")
                     
                 except Exception as e:
                     print(f"Error adding {page_key} to PDF: {str(e)}")
