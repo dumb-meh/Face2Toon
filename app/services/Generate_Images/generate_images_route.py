@@ -102,6 +102,7 @@ async def generate_images(
     image_style: str = Form(..., description="Desired illustration style"),
     coverpage: str = Query(default="no", description="'yes' if cover and page 1 already exist, 'no' to generate all pages"),
     sequential: str = Query(default="no", description="'yes' to force sequential generation with reference images, 'no' for default behavior"),
+    page_0_url: Optional[str] = Form(default=None, description="Optional: URL of previously generated cover page image (required when coverpage='yes')"),
     page_1_url: Optional[str] = Form(default=None, description="Optional: URL of previously generated page 1 image (required when coverpage='yes' and sequential='yes')")
 ):
     """Generate images for all pages. Set coverpage='yes' to skip page 0 and page 1. If coverpage='yes', optionally provide page_1_url for sequential generation."""

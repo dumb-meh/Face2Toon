@@ -8,3 +8,4 @@ pillow
 aiofiles
 byteplus-sdk
 openai
+boto3
