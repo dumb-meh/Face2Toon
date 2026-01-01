@@ -93,7 +93,7 @@ class GenerateImages:
         
         # Determine which pages to generate
         if coverpage.lower() == "yes":
-            # Skip page 0 and page 1, generate pages 2-10
+            # Skip page 0 and page 1, generate all remaining pages
             pages_to_generate = {k: v for k, v in prompts.items() if k not in ['page 0', 'page 1']}
             story_to_generate = {k: v for k, v in story.items() if k not in ['page 0', 'page 1']} if story else {}
         else:
@@ -232,11 +232,20 @@ class GenerateImages:
                     generated_images_bytes['page 1'] = page_1_bytes
                     
                     # Split page 1 image into page 1 and page 2
-                    img = Image.open(io.BytesIO(page_1_bytes))
+                    # Keep reference to BytesIO to prevent garbage collection
+                    img_buffer = io.BytesIO(page_1_bytes)
+                    img = Image.open(img_buffer)
+                    img.load()  # Force load image data before operations
+                    
+                    # Convert to RGB to ensure complete independence from buffer
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
                     middle_x = img.width // 2
                     
-                    left_half = img.crop((0, 0, middle_x, img.height))
-                    right_half = img.crop((middle_x, 0, img.width, img.height))
+                    # Create independent copies of cropped regions
+                    left_half = img.crop((0, 0, middle_x, img.height)).copy()
+                    right_half = img.crop((middle_x, 0, img.width, img.height)).copy()
                     
                     if upload_to_s3:
                         # Upload full page 1 image to S3 first
@@ -256,6 +265,12 @@ class GenerateImages:
                         left_buffer.seek(0)
                         right_buffer.seek(0)
                         
+                        # Read bytes for PDF BEFORE uploading (upload closes the buffer)
+                        left_bytes_for_pdf = left_buffer.read()
+                        right_bytes_for_pdf = right_buffer.read()
+                        left_buffer.seek(0)
+                        right_buffer.seek(0)
+                        
                         left_object_name = f"facetoon/{book_uuid}/splitted/page_1.png"
                         right_object_name = f"facetoon/{book_uuid}/splitted/page_2.png"
                         
@@ -265,11 +280,9 @@ class GenerateImages:
                         if left_result['success'] and right_result['success']:
                             image_urls['page 1'] = left_result['url']
                             image_urls['page 2'] = right_result['url']
-                            # Store bytes for PDF
-                            left_buffer.seek(0)
-                            right_buffer.seek(0)
-                            image_bytes_for_pdf['page 1'] = left_buffer.read()
-                            image_bytes_for_pdf['page 2'] = right_buffer.read()
+                            # Store bytes for PDF (already read before upload)
+                            image_bytes_for_pdf['page 1'] = left_bytes_for_pdf
+                            image_bytes_for_pdf['page 2'] = right_bytes_for_pdf
                             print(f"Uploaded split page 1 to S3")
                             print(f"  - page 1: {left_result['url']}")
                             print(f"  - page 2: {right_result['url']}")
@@ -298,13 +311,19 @@ class GenerateImages:
                 else:
                     print(f"Warning: Page 1 image not found at: {file_path}")
             except Exception as e:
+                import traceback
                 print(f"Error loading/splitting page 1 image: {str(e)}")
+                traceback.print_exc()
         
         page_counter = page_counter_start
         
         if force_sequential:
             # Sequential generation when forced
             sorted_pages = sorted(pages.items(), key=lambda x: int(x[0].split()[1]))
+            
+            print(f"\nSequential generation: Processing {len(sorted_pages)} pages from prompts")
+            print(f"Pages to generate: {[k for k, _ in sorted_pages]}")
+            print(f"Starting page_counter: {page_counter}")
             
             for page_key, prompt in sorted_pages:
                 reference_page = None
@@ -412,7 +431,7 @@ class GenerateImages:
                     if is_coloring_page:
                         # Coloring pages are not split, add with their custom key (page 23, 24)
                         for key, url in image_urls_dict.items():
-                            if key != 'full' and key != 'full_bytes':
+                            if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
                                 image_urls[key] = url
                                 print(f"  - {key}: {url}")
                     else:
@@ -420,7 +439,7 @@ class GenerateImages:
                         if 'full' in image_urls_dict:
                             full_image_urls[page_key] = image_urls_dict['full']
                         for key, url in image_urls_dict.items():
-                            if key != 'full' and key != 'full_bytes':
+                            if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
                                 image_urls[key] = url
                                 print(f"  - {key}: {url}")
                         page_counter += 1  # Increment for next image
@@ -479,17 +498,44 @@ class GenerateImages:
                         # Check if this page was actually split (has keys other than 'full')
                         has_split_pages = any(key != 'full' for key in image_urls_dict.keys())
                         
+                        # Store full URL for reference
+                        if 'full' in image_urls_dict:
+                            full_image_urls[page_key] = image_urls_dict['full']
+                        
+                        # Store bytes for PDF generation
+                        if should_split and page_key != 'page 0':
+                            # For split pages, store the left and right halves
+                            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                            is_coloring_page = page_num == 12 or page_num == 13
+                            
+                            if not is_coloring_page:
+                                # Extract split page bytes
+                                for key in image_urls_dict.keys():
+                                    if key.startswith('page ') and key != 'full' and key != 'full_bytes':
+                                        if f'{key}_bytes' in image_urls_dict:
+                                            image_bytes_for_pdf[key] = image_urls_dict[f'{key}_bytes']
+                            else:
+                                # Coloring pages - store with their actual key (page 23, 24)
+                                if 'full_bytes' in image_urls_dict:
+                                    for key in image_urls_dict.keys():
+                                        if key.startswith('page ') and key != 'full':
+                                            image_bytes_for_pdf[key] = image_urls_dict['full_bytes']
+                        else:
+                            # Cover page or non-split page
+                            if 'full_bytes' in image_urls_dict:
+                                image_bytes_for_pdf[page_key] = image_urls_dict['full_bytes']
+                        
                         if has_split_pages:
                             # Page was split - add split page URLs
                             for key, url in image_urls_dict.items():
-                                if key != 'full' and key != 'full_bytes':
+                                if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
                                     image_urls[key] = url
                                     print(f"  - {key}: {url}")
                         else:
                             # Page was not split (page 0, coloring pages, or splitting disabled)
                             # Check if dict has a specific key (like 'page 23' for coloring pages)
                             for key, url in image_urls_dict.items():
-                                if key != 'full' and key != 'full_bytes':
+                                if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
                                     # Use the specific key (e.g., 'page 23', 'page 24')
                                     image_urls[key] = url
                                     print(f"  - {key}: {url}")
@@ -503,7 +549,8 @@ class GenerateImages:
         
         print(f"\nFinal image_urls dictionary contains {len(image_urls)} pages:")
         for key in sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if x.split()[1].isdigit() else 0):
-            print(f"  - {key}")
+            if not key.endswith('_bytes'):
+                print(f"  - {key}")
         
         return image_urls, full_image_urls, image_bytes_for_pdf
     
