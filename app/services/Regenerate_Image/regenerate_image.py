@@ -32,39 +32,62 @@ class ReGenerateImage:
             # Extract the S3 object key from the image URL
             s3_object_key = self._extract_s3_key_from_url(request.iamge_url)
             
-            # Derive the split image keys from the full image key
-            left_key, right_key = self._derive_split_image_keys(s3_object_key)
-            
             # Download the image from S3
             print(f"Downloading image from S3: {s3_object_key}")
             image_bytes = self._download_image_from_s3(s3_object_key)
             
-            # Delete all three old images in parallel while regenerating
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                # Submit deletion tasks for full and split images
-                delete_full_future = executor.submit(self._delete_old_image, s3_object_key)
-                delete_left_future = executor.submit(self._delete_old_image, left_key)
-                delete_right_future = executor.submit(self._delete_old_image, right_key)
+            is_cover = request.page_type.lower() == "cover"
+            
+            if is_cover:
+                # Cover page: only delete full image, no splitting
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    # Submit deletion task for full image only
+                    delete_full_future = executor.submit(self._delete_old_image, s3_object_key)
+                    
+                    # Generate cover image (no splitting)
+                    image_urls_future = executor.submit(
+                        self._generate_cover_image,
+                        request.prompt,
+                        request.story,
+                        image_bytes,
+                        request.gender,
+                        request.age,
+                        request.image_style,
+                        s3_object_key
+                    )
+                    
+                    # Wait for both tasks
+                    delete_full_future.result()
+                    page_image_urls = image_urls_future.result()
+            else:
+                # Normal page: delete all three images and split
+                left_key, right_key = self._derive_split_image_keys(s3_object_key)
                 
-                # Generate new image with reference to the old one
-                image_urls_future = executor.submit(
-                    self._generate_and_split_image,
-                    request.prompt,
-                    request.story,
-                    image_bytes,
-                    request.gender,
-                    request.age,
-                    request.image_style,
-                    s3_object_key,
-                    left_key,
-                    right_key
-                )
-                
-                # Wait for all tasks
-                delete_full_future.result()
-                delete_left_future.result()
-                delete_right_future.result()
-                page_image_urls = image_urls_future.result()
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    # Submit deletion tasks for full and split images
+                    delete_full_future = executor.submit(self._delete_old_image, s3_object_key)
+                    delete_left_future = executor.submit(self._delete_old_image, left_key)
+                    delete_right_future = executor.submit(self._delete_old_image, right_key)
+                    
+                    # Generate new image with splitting
+                    image_urls_future = executor.submit(
+                        self._generate_and_split_image,
+                        request.prompt,
+                        request.story,
+                        image_bytes,
+                        request.gender,
+                        request.age,
+                        request.image_style,
+                        s3_object_key,
+                        left_key,
+                        right_key
+                    )
+                    
+                    # Wait for all tasks
+                    delete_full_future.result()
+                    delete_left_future.result()
+                    delete_right_future.result()
+                    page_image_urls = image_urls_future.result()
             
             print(f"Image regenerated successfully: {page_image_urls.fullPageUrl}")
             return ReGenerateImageResponse(image_url=[page_image_urls])
@@ -141,6 +164,103 @@ class ReGenerateImage:
             print(f"Error deleting old image: {str(e)}")
             # Don't raise, just log - regeneration is more important
             return {'success': False, 'message': str(e)}
+    
+    def _generate_cover_image(
+        self,
+        prompt: str,
+        story: str,
+        reference_image_bytes: bytes,
+        gender: str,
+        age: int,
+        image_style: str,
+        full_s3_key: str
+    ) -> PageImageUrls:
+        """Generate a corrected cover image (no splitting) - 8.5" x 8.5" """
+        try:
+            # Create enhanced prompt with error correction instructions
+            enhanced_prompt = self._create_correction_prompt(prompt, story, gender, age, image_style)
+            
+            # Encode reference image to base64
+            reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
+            
+            # Prepare headers
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Generate cover image: 8.5" x 8.5" at 300 DPI = 2550x2550 pixels
+            width, height = 2550, 2550
+            
+            # Prepare payload with reference image
+            payload = {
+                'model': self.model,
+                'prompt': enhanced_prompt,
+                'width': width,
+                'height': height,
+                'watermark': False,
+                'image_reference': [
+                    {
+                        'image': f'data:image/png;base64,{reference_image_base64}',
+                        'weight': 0.8  # High weight to maintain similarity
+                    }
+                ]
+            }
+            
+            # Call SeeDream API
+            print(f"Calling SeeDream API to regenerate cover image...")
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=120
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Extract image URL from response
+            image_url = result.get('data', [{}])[0].get('url') or result.get('image_url') or result.get('url')
+            
+            if not image_url:
+                raise ValueError("No image URL in SeeDream API response")
+            
+            # Download the regenerated image
+            print(f"Downloading regenerated cover image from: {image_url}")
+            img_response = requests.get(image_url, timeout=60)
+            img_response.raise_for_status()
+            
+            # Open and resize to exact dimensions if needed
+            img = Image.open(io.BytesIO(img_response.content))
+            if img.size != (width, height):
+                img = img.resize((width, height), Image.Resampling.LANCZOS)
+            
+            # Save cover image to BytesIO
+            cover_img_buffer = io.BytesIO()
+            img.save(cover_img_buffer, format='PNG', dpi=(300, 300))
+            cover_img_buffer.seek(0)
+            
+            # Upload cover image to S3
+            print(f"Uploading cover image to S3: {full_s3_key}")
+            cover_upload_result = upload_file_object_to_s3(
+                file_object=cover_img_buffer,
+                bucket_name=self.bucket_name,
+                object_name=full_s3_key
+            )
+            
+            if not cover_upload_result['success']:
+                raise ValueError(f"Failed to upload cover image to S3: {cover_upload_result['message']}")
+            
+            # Return PageImageUrls object with only fullPageUrl (no splitting for cover)
+            return PageImageUrls(
+                fullPageUrl=cover_upload_result['url'],
+                leftUrl=None,
+                rightUrl=None
+            )
+            
+        except Exception as e:
+            print(f"Error generating cover image: {str(e)}")
+            raise
     
     def _generate_and_split_image(
         self,
