@@ -1,0 +1,309 @@
+import os
+import io
+import re
+import requests
+import base64
+import boto3
+from PIL import Image
+from dotenv import load_dotenv
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+from .regenerate_image_schema import ReGenerateImageRequest, ReGenerateImageResponse, PageImageUrls
+from app.utils.upload_to_bucket import upload_file_object_to_s3, delete_file_from_s3
+
+load_dotenv()
+
+class ReGenerateImage:
+    def __init__(self):
+        self.api_key = os.getenv("ARK_API_KEY")
+        self.model = "seedream-4-0-250828"
+        self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
+        self.s3_client = boto3.client(
+            's3',
+            aws_access_key_id=os.getenv('S3_ACCESS_KEY'),
+            aws_secret_access_key=os.getenv('S3_SECRET_KEY'),
+            region_name=os.getenv('S3_REGION', 'eu-north-1')
+        )
+        self.bucket_name = os.getenv('S3_BUCKET_NAME', 'mycvconnect')
+    
+    def regenerate_image(self, request: ReGenerateImageRequest) -> ReGenerateImageResponse:
+        """Main method to regenerate an image with error corrections"""
+        try:
+            # Extract the S3 object key from the image URL
+            s3_object_key = self._extract_s3_key_from_url(request.iamge_url)
+            
+            # Derive the split image keys from the full image key
+            left_key, right_key = self._derive_split_image_keys(s3_object_key)
+            
+            # Download the image from S3
+            print(f"Downloading image from S3: {s3_object_key}")
+            image_bytes = self._download_image_from_s3(s3_object_key)
+            
+            # Delete all three old images in parallel while regenerating
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                # Submit deletion tasks for full and split images
+                delete_full_future = executor.submit(self._delete_old_image, s3_object_key)
+                delete_left_future = executor.submit(self._delete_old_image, left_key)
+                delete_right_future = executor.submit(self._delete_old_image, right_key)
+                
+                # Generate new image with reference to the old one
+                image_urls_future = executor.submit(
+                    self._generate_and_split_image,
+                    request.prompt,
+                    request.story,
+                    image_bytes,
+                    request.gender,
+                    request.age,
+                    request.image_style,
+                    s3_object_key,
+                    left_key,
+                    right_key
+                )
+                
+                # Wait for all tasks
+                delete_full_future.result()
+                delete_left_future.result()
+                delete_right_future.result()
+                page_image_urls = image_urls_future.result()
+            
+            print(f"Image regenerated successfully: {page_image_urls.fullPageUrl}")
+            return ReGenerateImageResponse(image_url=[page_image_urls])
+            
+        except Exception as e:
+            print(f"Error in regenerate_image: {str(e)}")
+            raise
+    
+    def _extract_s3_key_from_url(self, url: str) -> str:
+        """Extract S3 object key from full URL"""
+        # Parse URL like: https://mycvconnect.s3.eu-north-1.amazonaws.com/facetoon/book_uuid/image.png
+        # Or local URL: http://localhost:8000/uploads/generated_images/20260101_071108_83c28c78_image_1.png
+        if 's3.' in url or '.amazonaws.com' in url:
+            parsed = urlparse(url)
+            s3_key = parsed.path.lstrip('/')
+        else:
+            # Local URL pattern - extract the path after /uploads/
+            parsed = urlparse(url)
+            path = parsed.path.lstrip('/')
+            # Remove 'uploads/' prefix if present
+            if path.startswith('uploads/'):
+                s3_key = path[len('uploads/'):]
+            else:
+                s3_key = path
+        return s3_key
+    
+    def _derive_split_image_keys(self, full_image_key: str) -> tuple:
+        """Derive the split image S3 keys from the full image key
+        Example: 
+        Full: generated_images/20260101_071108_83c28c78_image_1.png
+        Left: generated_images/splitted/20260101_071108_83c28c78_page_1.png
+        Right: generated_images/splitted/20260101_071108_83c28c78_page_2.png
+        """
+        # Extract the directory and filename
+        directory = os.path.dirname(full_image_key)
+        filename = os.path.basename(full_image_key)
+        
+        # Parse the filename pattern: {session_id}_image_{number}.png
+        # Extract session_id and number
+        match = re.match(r'(.+)_image_(\d+)\.(\w+)$', filename)
+        if not match:
+            raise ValueError(f"Invalid filename pattern: {filename}")
+        
+        session_id = match.group(1)
+        image_number = int(match.group(2))
+        extension = match.group(3)
+        
+        # Calculate page numbers: image N -> pages (N*2+1) and (N*2+2)
+        left_page = (image_number * 2) + 1
+        right_page = (image_number * 2) + 2
+        
+        # Build split image keys
+        left_key = f"{directory}/splitted/{session_id}_page_{left_page}.{extension}"
+        right_key = f"{directory}/splitted/{session_id}_page_{right_page}.{extension}"
+        
+        return left_key, right_key
+    
+    def _download_image_from_s3(self, s3_object_key: str) -> bytes:
+        """Download image from S3 bucket"""
+        try:
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_object_key)
+            return response['Body'].read()
+        except Exception as e:
+            print(f"Error downloading from S3: {str(e)}")
+            raise
+    
+    def _delete_old_image(self, s3_object_key: str) -> dict:
+        """Delete the old image from S3"""
+        try:
+            result = delete_file_from_s3(bucket_name=self.bucket_name, object_name=s3_object_key)
+            print(f"Old image deletion: {result['message']}")
+            return result
+        except Exception as e:
+            print(f"Error deleting old image: {str(e)}")
+            # Don't raise, just log - regeneration is more important
+            return {'success': False, 'message': str(e)}
+    
+    def _generate_and_split_image(
+        self,
+        prompt: str,
+        story: str,
+        reference_image_bytes: bytes,
+        gender: str,
+        age: int,
+        image_style: str,
+        full_s3_key: str,
+        left_s3_key: str,
+        right_s3_key: str
+    ) -> PageImageUrls:
+        """Generate a corrected full image, split it, and upload all three versions"""
+        try:
+            # Create enhanced prompt with error correction instructions
+            enhanced_prompt = self._create_correction_prompt(prompt, story, gender, age, image_style)
+            
+            # Encode reference image to base64
+            reference_image_base64 = base64.b64encode(reference_image_bytes).decode('utf-8')
+            
+            # Prepare headers
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Generate full double-page image: 17" x 8.5" at 300 DPI = 5100x2550 pixels
+            width, height = 5100, 2550
+            
+            # Prepare payload with reference image
+            payload = {
+                'model': self.model,
+                'prompt': enhanced_prompt,
+                'width': width,
+                'height': height,
+                'watermark': False,
+                'image_reference': [
+                    {
+                        'image': f'data:image/png;base64,{reference_image_base64}',
+                        'weight': 0.8  # High weight to maintain similarity
+                    }
+                ]
+            }
+            
+            # Call SeeDream API
+            print(f"Calling SeeDream API to regenerate image...")
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=120
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Extract image URL from response
+            image_url = result.get('data', [{}])[0].get('url') or result.get('image_url') or result.get('url')
+            
+            if not image_url:
+                raise ValueError("No image URL in SeeDream API response")
+            
+            # Download the regenerated image
+            print(f"Downloading regenerated image from: {image_url}")
+            img_response = requests.get(image_url, timeout=60)
+            img_response.raise_for_status()
+            
+            # Open and resize to exact dimensions if needed
+            img = Image.open(io.BytesIO(img_response.content))
+            if img.size != (width, height):
+                img = img.resize((width, height), Image.Resampling.LANCZOS)
+            
+            # Save full image to BytesIO
+            full_img_buffer = io.BytesIO()
+            img.save(full_img_buffer, format='PNG', dpi=(300, 300))
+            full_img_buffer.seek(0)
+            
+            # Upload full image to S3
+            print(f"Uploading full image to S3: {full_s3_key}")
+            full_upload_result = upload_file_object_to_s3(
+                file_object=full_img_buffer,
+                bucket_name=self.bucket_name,
+                object_name=full_s3_key
+            )
+            
+            if not full_upload_result['success']:
+                raise ValueError(f"Failed to upload full image to S3: {full_upload_result['message']}")
+            
+            # Split the image in the middle
+            # Left half: 0 to 2550 pixels (8.5" x 8.5")
+            # Right half: 2550 to 5100 pixels (8.5" x 8.5")
+            middle_x = width // 2  # 2550
+            
+            left_half = img.crop((0, 0, middle_x, height))
+            right_half = img.crop((middle_x, 0, width, height))
+            
+            # Save left half
+            left_img_buffer = io.BytesIO()
+            left_half.save(left_img_buffer, format='PNG', dpi=(300, 300))
+            left_img_buffer.seek(0)
+            
+            # Upload left half to S3
+            print(f"Uploading left image to S3: {left_s3_key}")
+            left_upload_result = upload_file_object_to_s3(
+                file_object=left_img_buffer,
+                bucket_name=self.bucket_name,
+                object_name=left_s3_key
+            )
+            
+            if not left_upload_result['success']:
+                raise ValueError(f"Failed to upload left image to S3: {left_upload_result['message']}")
+            
+            # Save right half
+            right_img_buffer = io.BytesIO()
+            right_half.save(right_img_buffer, format='PNG', dpi=(300, 300))
+            right_img_buffer.seek(0)
+            
+            # Upload right half to S3
+            print(f"Uploading right image to S3: {right_s3_key}")
+            right_upload_result = upload_file_object_to_s3(
+                file_object=right_img_buffer,
+                bucket_name=self.bucket_name,
+                object_name=right_s3_key
+            )
+            
+            if not right_upload_result['success']:
+                raise ValueError(f"Failed to upload right image to S3: {right_upload_result['message']}")
+            
+            # Return PageImageUrls object
+            return PageImageUrls(
+                fullPageUrl=full_upload_result['url'],
+                leftUrl=left_upload_result['url'],
+                rightUrl=right_upload_result['url']
+            )
+            
+        except Exception as e:
+            print(f"Error generating and splitting image: {str(e)}")
+            raise
+    
+    def _create_correction_prompt(self, prompt: str, story: str, gender: str, age: int, image_style: str) -> str:
+        """Create an enhanced prompt with error correction instructions"""
+        correction_instructions = (
+            "CRITICAL: Regenerate this image fixing any errors or inconsistencies while keeping everything else identical. "
+            "Fix issues like: incorrect gender representation, anatomical errors (especially hands, fingers, limbs), "
+            "inconsistent character features, unwanted objects (books, text, labels), unnatural proportions, "
+            "or any other visual mistakes. Maintain the exact same composition, scene, colors, style, and character design. "
+            "Only correct the errors - do not change what is correct. "
+        )
+        
+        gender_description = "boy" if gender.lower() == "male" else "girl"
+        age_description = f"{age}-year-old {gender_description}"
+        
+        enhanced_prompt = (
+            f"{correction_instructions}"
+            f"\n\nOriginal Prompt: {prompt}"
+            f"\n\nStory Context: {story}"
+            f"\n\nCharacter: {age_description}, illustrated in {image_style} style. "
+            f"Ensure the character's gender is clearly {gender_description}, with appropriate features and appearance. "
+            f"Verify all anatomical details are correct and natural-looking."
+        )
+        
+        return enhanced_prompt
+    
+
+
