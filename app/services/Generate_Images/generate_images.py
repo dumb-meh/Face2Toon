@@ -26,6 +26,7 @@ load_dotenv()
 class GenerateImages:
     def __init__(self):
         self.api_key = os.getenv("ARK_API_KEY")
+        print(f"DEBUG: ARK_API_KEY loaded: {bool(self.api_key)} (length: {len(self.api_key) if self.api_key else 0})")
         self.model = "seedream-4-0-250828"
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
         self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
@@ -694,6 +695,17 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 json=payload,
                 timeout=120
             )
+            
+            # Debug: Print response details before raising error
+            if response.status_code != 200:
+                print(f"API Error Response:")
+                print(f"  Status Code: {response.status_code}")
+                print(f"  Response Body: {response.text}")
+                try:
+                    error_json = response.json()
+                    print(f"  Response JSON: {error_json}")
+                except:
+                    pass
             
             response.raise_for_status()
             result = response.json()
