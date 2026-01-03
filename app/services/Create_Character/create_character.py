@@ -15,8 +15,18 @@ class CreateCharacter:
         return response
 
     def create_prompt(self,request: CreateCharacterRequest) -> str:
-        # Implement prompt creation logic here
-        return "Generated prompt based on past characters"
+        past = ""
+        if request.past_characters:
+            past = f'''Avoid these past characters: {', '.join(request.past_characters)}. "
+        prompt = f"{past}Create a random child character for a children's book. Respond only with a JSON object containing 'name' (a creative child's name), 'age' (an integer between 5 and 12), and 'prompt' (a short description of the character suitable for generating children's book illustrations and stories).
+        
+        Return the response in the following JSON format:
+        {{
+            "name": "<child's name>",
+            "age": <child's age>,
+            "prompt": "<short character description>"
+        }}"
+        return prompt'''
     
     def get_openai_response(self, prompt: str) -> CreateCharacterResponse:
         completion = self.client.chat.completions.create(
