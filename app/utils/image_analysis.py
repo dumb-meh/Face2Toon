@@ -129,46 +129,89 @@ Use these dimensions to ensure text fits within the chosen area and doesn't over
 YOUR TASK - TEXT PLACEMENT STRATEGY:
 Analyze the image carefully and find the OPTIMAL text placement that balances:
 1. **Prominence & Readability** - Text should be clearly visible and prominently placed (this is a storybook!)
-2. **Avoid obscuring important elements** - DO NOT place text over:
+2. **CRITICAL: Avoid obscuring important elements** - DO NOT place text over:
    - Human characters (faces, bodies, or any part of people)
-   - Animals of any kind (birds, pets, creatures, insects, etc.)
+   - Animals of ANY kind including:
+     * Birds (flying or stationary) - CHECK THE SKY CAREFULLY
+     * Pets, creatures, insects
+     * Any living being visible in the scene
    - Key story elements or focal points
    - Important objects that tell the story
+   
+   **IMPORTANT**: Before choosing coordinates, scan the ENTIRE rectangular area where the text block will appear:
+   - Check every part of the text area (from x,y to x+text_width, y+total_height)
+   - Even if it looks like "empty sky", look carefully for birds, planes, or other objects
+   - If any living creature is present in that area, choose a different location
+
 3. **Natural reading position** - Text should be in a natural, comfortable reading position
    - Prefer upper-third or middle-area positions over bottom corners
    - Avoid obscure corner placements that make text hard to find
    - Think like a children's book designer - where would kids naturally look?
 
 PLACEMENT PRINCIPLES:
-✓ GOOD: Text over clear sky, empty background areas, grass/ground, plain walls, solid color areas, simple textures
+✓ GOOD: Text over TRULY EMPTY areas - clear sky WITHOUT birds, plain background, grass/ground, plain walls, solid colors
 ✓ GOOD: Text positioned prominently in upper or middle areas where readers naturally look
 ✓ GOOD: Text that's easy to spot and read at first glance
-✗ BAD: Text covering people, animals (including birds), faces, or story-critical objects
+✓ GOOD: Scanning the full text rectangle area before placement to ensure nothing important is there
+
+✗ BAD: Text covering people, animals (INCLUDING BIRDS IN THE SKY), faces, or story-critical objects
+✗ BAD: Placing text in sky without checking for birds first
 ✗ BAD: Text hidden in corners or edges just because there's empty space
 ✗ BAD: Text in awkward positions that require effort to find or read
 ✗ BAD: Text placement that looks like an afterthought
+✗ BAD: Not checking the ENTIRE area where text will appear for living creatures
 
 TECHNICAL CONSTRAINTS:
 - Text must be on LEFT side (x: 100 to {img_width//2 - 150}) OR RIGHT side (x: {img_width//2 + 150} to {img_width - 100})
 - Stay at least 150px away from the middle split line at x={img_width//2}
 - Leave 80-100px margins from top/bottom/side edges
-- Each line should be horizontally aligned on the chosen side (same x coordinate for all lines)
+- **CRITICAL LINE ALIGNMENT**: ALL lines MUST have the EXACT SAME x coordinate - they stack VERTICALLY
+- Lines are placed one below the other with ONLY the y coordinate changing
 - Vertical spacing between lines: {int(text_height + 10)}px
-- Ensure each line has enough horizontal space for its calculated width
+- Example for 3 lines on LEFT side: Line 1: (x=200, y=100), Line 2: (x=200, y={100 + int(text_height + 10)}), Line 3: (x=200, y={100 + 2*int(text_height + 10)})
+- Example for 3 lines on RIGHT side: Line 1: (x={img_width//2 + 200}, y=100), Line 2: (x={img_width//2 + 200}, y={100 + int(text_height + 10)}), Line 3: (x={img_width//2 + 200}, y={100 + 2*int(text_height + 10)})
+- **NEVER** vary x coordinate between lines - this will cause text to spread across both pages
 
 LINE SPLITTING STRATEGY:
-- Split text into 2-4 lines for optimal readability
+- **MANDATORY**: Include ALL words from the original text - every single word must appear in one of the lines
+- Split the COMPLETE text into 2-4 lines for optimal readability
+- Do not omit, truncate, or drop any words when splitting into lines
 - Consider the character widths above when breaking lines
 - Break at natural phrase boundaries when possible
 - Keep related words together
 - Ensure each line fits within the available horizontal space on the chosen side
+- Verify: Sum of all line texts = Complete original text (no words missing)
 
 COORDINATE PRECISION:
 - Provide exact x, y coordinates where text should START (top-left corner of text)
+- **CRITICAL**: Calculate the full rectangular area your text will occupy:
+  * Text rectangle: from (x, y) to (x + max_line_width, y + number_of_lines * line_height)
+  * SCAN THIS ENTIRE RECTANGLE in the image for any living creatures (especially birds)
+  * If you find ANY creature in this rectangle, move to a different area
 - Account for the text width of each line to ensure it doesn't overflow into restricted areas
 - Verify that (x + estimated_line_width) stays within the allowed boundaries
 - For LEFT side: x should allow full line width without crossing x={img_width//2 - 150}
 - For RIGHT side: x should allow full line width without exceeding x={img_width - 100}
+- **ALL lines must use the SAME x value** - only y changes between lines
+
+STEP-BY-STEP PLACEMENT PROCESS:
+1. Choose side (left or right) based on where characters/birds are located
+2. Find a clean rectangular area on that side (no birds, people, or animals)
+3. Pick ONE x-coordinate for the text start position on that side
+4. Calculate y-coordinates: y1 = starting_y, y2 = y1 + {int(text_height + 10)}, y3 = y2 + {int(text_height + 10)}, etc.
+5. Verify the rectangle from (x, y1) to (x + longest_line_width, y_last + {int(text_height)}) is completely free of living creatures
+6. If creatures found, go back to step 2 and pick a DIFFERENT area on the same side
+7. Double-check: Are all lines using the same x? Are y values properly spaced? Is the entire text block on one side?
+
+PLACEMENT VERIFICATION CHECKLIST:
+Before finalizing coordinates, verify:
+1. ✓ Is the text rectangle completely free of people? 
+2. ✓ Is the text rectangle completely free of animals/birds? (CHECK CAREFULLY - look for birds in sky)
+3. ✓ Is the text rectangle in a prominent, readable location?
+4. ✓ Does the text stay within the allowed boundaries for the chosen side?
+5. ✓ Do ALL lines have the EXACT SAME x coordinate?
+6. ✓ Are y coordinates properly incremented by {int(text_height + 10)}px for each line?
+7. ✓ Is every single word from the original text included in the lines?
 
 Return ONLY a JSON object in this exact format (no markdown, no extra text):
 {{

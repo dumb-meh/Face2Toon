@@ -576,70 +576,32 @@ class GenerateImages:
         try:
             # Enhance the prompt with detailed style and character instructions
             if page_key == "page 0":
-                # Cover page - include title rendering with text
-                text_instruction = f"""
-CRITICAL TEXT RENDERING REQUIREMENT:
-You MUST include the COMPLETE title text exactly as written below in the generated image.
-
-FULL TITLE TO RENDER:
-"{story_text}"
-
-TEXT PLACEMENT INSTRUCTIONS:
-- Integrate the title prominently into the cover design
-- Use an artistic, readable font suitable for a children's book title
-- Ensure the ENTIRE title is visible and readable
-- The text should be beautifully styled but COMPLETE from start to finish
-""" if story_text else """
-Composition suitable for a book cover with space for title text.
-"""
+                # Cover page - no text generation, composition only
                 enhanced_prompt = f"""
 Children's storybook cover illustration in {image_style} style.
 Main character: {age}-year-old {gender} child matching the reference image exactly.
 {prompt}
-{text_instruction}
+Composition suitable for a book cover with space for title text placement.
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
 The child's face, features, hair, and appearance must exactly match the reference image provided.
+DO NOT include any text or letters in the image.
 """.strip()
             else:
                 # Check if this is a coloring page (pages 12 or 13)
                 page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
                 is_coloring_page = page_num == 12 or page_num == 13
                 
-                # Story pages - include story text to be rendered in the image (except coloring pages)
-                if is_coloring_page:
-                    # No text for coloring pages
-                    text_instruction = ""
-                else:
-                    text_instruction = f"""
-CRITICAL TEXT RENDERING REQUIREMENT:
-You MUST include the COMPLETE text exactly as written below in the generated image. Do not truncate, shorten, or cut off any words.
-The ENTIRE text MUST be visible and readable in the image.
-
-FULL TEXT TO RENDER (COMPLETE, NO TRUNCATION):
-"{story_text}"
-
-TEXT PLACEMENT INSTRUCTIONS - DOUBLE PAGE SPREAD:
-IMPORTANT: This image is for a double-page spread (two pages side by side). The image is 17" wide (two 8.5" pages).
-- Place the text ONLY on the LEFT HALF of the image (the left 8.5" section)
-- The text should be contained within the LEFT PAGE only (left 50% of the image width)
-- Do NOT place text on the right half of the image
-- Position the text in a clear, readable area on the left page (top, middle, or bottom)
-- Use a clear, legible font size that fits the entire text within the left page area
-- Ensure ALL words from the beginning to the end are fully visible on the left page
-- The text must be complete from start to finish: "{story_text}"
-- If needed, use multiple lines to fit all the text within the left page, but ALL text must be included
-- Do NOT abbreviate, truncate, or use ellipsis (...) - render the FULL text
-- Keep the right half of the image (right page) for the illustration only, without any text
-""" if story_text else ""
+                # Story pages - no text generation, image only
                 enhanced_prompt = f"""
 Children's storybook illustration in {image_style} style.
 Main character: {age}-year-old {gender} child continuing from the previous page.
 {prompt}
-{text_instruction}
+Composition suitable for a children's storybook with space for text placement on the left side.
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
 CRITICAL: Maintain EXACT character appearance from the style reference - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. If clothing colors or patterns are specified in the prompt, follow them precisely without variation.
 Focus on: implementing the exact scene, actions, setting, and clothing details as described while preserving all character appearance characteristics.
-Negative prompt: No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance.
+DO NOT include any text, letters, or words in the image.
+Negative prompt: No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance. No text or letters in the image.
 """.strip()
             
             # Prepare headers
