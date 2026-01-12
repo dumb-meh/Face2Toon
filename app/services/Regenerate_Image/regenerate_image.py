@@ -120,30 +120,52 @@ class ReGenerateImage:
         Full: generated_images/20260101_071108_83c28c78_image_1.png
         Left: generated_images/splitted/20260101_071108_83c28c78_page_1.png
         Right: generated_images/splitted/20260101_071108_83c28c78_page_2.png
+        
+        Or:
+        Full: facetoon/uuid/full/image_2.png
+        Left: facetoon/uuid/splitted/page_5.png
+        Right: facetoon/uuid/splitted/page_6.png
         """
         # Extract the directory and filename
         directory = os.path.dirname(full_image_key)
         filename = os.path.basename(full_image_key)
         
-        # Parse the filename pattern: {session_id}_image_{number}.png
-        # Extract session_id and number
+        # Try pattern 1: {session_id}_image_{number}.png
         match = re.match(r'(.+)_image_(\d+)\.(\w+)$', filename)
-        if not match:
-            raise ValueError(f"Invalid filename pattern: {filename}")
+        if match:
+            session_id = match.group(1)
+            image_number = int(match.group(2))
+            extension = match.group(3)
+            
+            # Calculate page numbers: image N -> pages (N*2+1) and (N*2+2)
+            left_page = (image_number * 2) + 1
+            right_page = (image_number * 2) + 2
+            
+            # Build split image keys
+            left_key = f"{directory}/splitted/{session_id}_page_{left_page}.{extension}"
+            right_key = f"{directory}/splitted/{session_id}_page_{right_page}.{extension}"
+            
+            return left_key, right_key
         
-        session_id = match.group(1)
-        image_number = int(match.group(2))
-        extension = match.group(3)
+        # Try pattern 2: image_{number}.png (without session_id)
+        match = re.match(r'image_(\d+)\.(\w+)$', filename)
+        if match:
+            image_number = int(match.group(1))
+            extension = match.group(2)
+            
+            # Calculate page numbers: image N -> pages (N*2+1) and (N*2+2)
+            left_page = (image_number * 2) + 1
+            right_page = (image_number * 2) + 2
+            
+            # Build split image keys (replace 'full' with 'splitted' in directory)
+            split_directory = directory.replace('/full', '/splitted')
+            left_key = f"{split_directory}/page_{left_page}.{extension}"
+            right_key = f"{split_directory}/page_{right_page}.{extension}"
+            
+            return left_key, right_key
         
-        # Calculate page numbers: image N -> pages (N*2+1) and (N*2+2)
-        left_page = (image_number * 2) + 1
-        right_page = (image_number * 2) + 2
-        
-        # Build split image keys
-        left_key = f"{directory}/splitted/{session_id}_page_{left_page}.{extension}"
-        right_key = f"{directory}/splitted/{session_id}_page_{right_page}.{extension}"
-        
-        return left_key, right_key
+        # If no pattern matches, raise error
+        raise ValueError(f"Invalid filename pattern: {filename}. Expected format: '{{session_id}}_image_{{number}}.ext' or 'image_{{number}}.ext'")
     
     def _download_image_from_s3(self, s3_object_key: str) -> bytes:
         """Download image from S3 bucket"""
@@ -417,7 +439,7 @@ class ReGenerateImage:
         enhanced_prompt = (
             f"{correction_instructions}"
             f"\n\nOriginal Prompt: {prompt}"
-            f"\n\nStory Context: {story}"
+            f"\n\nStory Content for that page: {story}"
             f"\n\nCharacter: {age_description}, illustrated in {image_style} style. "
             f"Ensure the character's gender is clearly {gender_description}, with appropriate features and appearance. "
             f"Verify all anatomical details are correct and natural-looking."
