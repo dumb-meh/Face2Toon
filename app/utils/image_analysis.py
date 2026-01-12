@@ -257,12 +257,20 @@ Return ONLY a JSON object in this exact format (no markdown, no extra text):
         # Parse response
         result_text = response.choices[0].message.content.strip()
         
+        print(f"[GPT-4o Vision] Raw response length: {len(result_text)}")
+        print(f"[GPT-4o Vision] Raw response preview: {result_text[:200]}...")
+        
         # Remove markdown code blocks if present
         if result_text.startswith("```"):
             result_text = result_text.split("```")[1]
             if result_text.startswith("json"):
                 result_text = result_text[4:]
             result_text = result_text.strip()
+        
+        print(f"[GPT-4o Vision] After cleanup: {result_text[:200]}...")
+        
+        if not result_text:
+            raise Exception("GPT-4o Vision returned empty response")
         
         result = json.loads(result_text)
         
@@ -285,6 +293,10 @@ Return ONLY a JSON object in this exact format (no markdown, no extra text):
         )
         
     except Exception as e:
+        print(f"[GPT-4o Vision] Error: {str(e)}")
+        print(f"[GPT-4o Vision] Full error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Text placement recommendation failed: {str(e)}")
 
 

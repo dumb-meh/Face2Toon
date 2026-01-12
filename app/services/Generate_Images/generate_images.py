@@ -57,13 +57,21 @@ class GenerateImages:
                 page_key, image_bytes, page_number, is_single_page = item
                 
                 print(f"[Text Worker] Processing {page_key} for text insertion...")
+                print(f"[Text Worker] - is_single_page: {is_single_page}")
                 
                 # Get story text for this page
                 story_text = story.get(page_key, "")
+                print(f"[Text Worker] - story_text length: {len(story_text) if story_text else 0}")
+                
+                # Initialize flag to track if text was added
+                text_was_added = False
                 
                 if story_text and not is_single_page:
                     # Use image analysis to add text
                     try:
+                        print(f"[Text Worker] Calling get_text_placement_recommendation for {page_key}...")
+                        print(f"[Text Worker] Text to add: '{story_text[:50]}...' ({len(story_text)} chars)")
+                        
                         # Get text placement recommendation
                         text_recommendation = await get_text_placement_recommendation(
                             image_bytes, 
@@ -71,26 +79,35 @@ class GenerateImages:
                             font_size
                         )
                         
+                        print(f"[Text Worker] Got recommendation: {text_recommendation.number_of_lines} lines on {text_recommendation.side} side")
+                        
                         # Open image and add text
                         img = Image.open(io.BytesIO(image_bytes))
                         draw = ImageDraw.Draw(img)
                         
                         # Load font
                         from pathlib import Path
-                        font_path = Path(__file__).resolve().parents[2] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                        print(f"[Text Worker] Looking for font at: {font_path}")
                         try:
                             if font_path.exists():
                                 font = ImageFont.truetype(str(font_path), font_size)
+                                print(f"[Text Worker] ✓ Loaded Comic Relief font at size {font_size}")
                             else:
                                 font = ImageFont.load_default()
-                        except:
+                                print(f"[Text Worker] ✗ Font not found at {font_path}, using default")
+                        except Exception as font_err:
                             font = ImageFont.load_default()
+                            print(f"[Text Worker] ✗ Font load error: {font_err}, using default")
                         
                         # Draw text with outline
                         outline_color = "black" if text_color.lower() == "white" else "white"
+                        print(f"[Text Worker] Drawing {len(text_recommendation.line_coordinates)} lines with color={text_color}, outline={outline_color}")
+                        
                         for line_coord in text_recommendation.line_coordinates:
                             x, y = line_coord.x, line_coord.y
                             line_text = line_coord.text
+                            print(f"[Text Worker]   Line {line_coord.line_number}: '{line_text}' at ({x}, {y})")
                             
                             # Draw outline
                             for adj_x in [-2, 0, 2]:
@@ -99,19 +116,32 @@ class GenerateImages:
                             # Draw main text
                             draw.text((x, y), line_text, font=font, fill=text_color)
                         
-                        # Save image with text
+                        # Save image with text to new buffer
                         output_buffer = io.BytesIO()
                         img.save(output_buffer, format='PNG', dpi=(dpi, dpi))
                         output_buffer.seek(0)
-                        image_bytes = output_buffer.read()
+                        image_bytes = output_buffer.read()  # CRITICAL: Update image_bytes with text version
                         
-                        print(f"[Text Worker] Added text to {page_key}")
+                        text_was_added = True
+                        print(f"[Text Worker] ✓ Successfully added {len(text_recommendation.line_coordinates)} lines of text to {page_key}")
+                        print(f"[Text Worker] New image size with text: {len(image_bytes)} bytes")
+                        
                     except Exception as e:
-                        print(f"[Text Worker] Error adding text to {page_key}: {str(e)}")
+                        print(f"[Text Worker] ✗ Error adding text to {page_key}: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        text_was_added = False
                         # Continue with image without text
+                else:
+                    if not story_text:
+                        print(f"[Text Worker] No story text for {page_key}, skipping text insertion")
+                    if is_single_page:
+                        print(f"[Text Worker] {page_key} is single page (cover/coloring), skipping text insertion")
                 
-                # Now split and save the image
+                # Now split and save the image (image_bytes now has text if it was added)
+                print(f"[Text Worker] Processing final image for {page_key} (text_was_added={text_was_added})")
                 img = Image.open(io.BytesIO(image_bytes))
+                print(f"[Text Worker] Opened final image: {img.size[0]}x{img.size[1]} pixels")
                 
                 page_num_str = page_key.replace('page ', '').replace(' ', '_')
                 
@@ -122,14 +152,16 @@ class GenerateImages:
                 full_image_bytes_data = full_image_bytes.read()
                 full_image_bytes.seek(0)
                 
-                # Upload/save full image
+                # Upload/save full image (with text if applicable)
                 if upload_to_s3:
                     full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
                     upload_result = upload_file_object_to_s3(full_image_bytes, object_name=full_object_name)
                     if upload_result['success']:
                         full_image_url = upload_result['url']
+                        print(f"[Text Worker] Uploaded full image with text to S3: {full_image_url}")
                     else:
                         full_image_url = None
+                        print(f"[Text Worker] Failed to upload full image to S3")
                 else:
                     os.makedirs('uploads/generated_images', exist_ok=True)
                     full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
@@ -137,6 +169,7 @@ class GenerateImages:
                     base_url = os.getenv('domain') or os.getenv('BASE_URL')
                     base_url = base_url.rstrip('/')
                     full_image_url = f"{base_url}/{full_image_filename}"
+                    print(f"[Text Worker] Saved full image with text locally: {full_image_url}")
                 
                 # Split if not single page
                 if not is_single_page:
@@ -173,7 +206,9 @@ class GenerateImages:
                             results_dict['full_image_urls'][page_key] = full_image_url
                             results_dict['image_bytes'][f'page {left_page_num}'] = left_bytes
                             results_dict['image_bytes'][f'page {right_page_num}'] = right_bytes
-                            print(f"[Text Worker] Completed {page_key} -> pages {left_page_num}, {right_page_num}")
+                            print(f"[Text Worker] ✓ Completed {page_key} -> pages {left_page_num}, {right_page_num} (with text)")
+                            print(f"[Text Worker]   Left: {left_result['url']}")
+                            print(f"[Text Worker]   Right: {right_result['url']}")
                     else:
                         # Save locally
                         os.makedirs('uploads/generated_images/splitted', exist_ok=True)
@@ -199,7 +234,9 @@ class GenerateImages:
                         results_dict['full_image_urls'][page_key] = full_image_url
                         results_dict['image_bytes'][f'page {left_page_num}'] = left_bytes
                         results_dict['image_bytes'][f'page {right_page_num}'] = right_bytes
-                        print(f"[Text Worker] Completed {page_key} -> pages {left_page_num}, {right_page_num}")
+                        print(f"[Text Worker] ✓ Completed {page_key} -> pages {left_page_num}, {right_page_num} (with text)")
+                        print(f"[Text Worker]   Left: {left_filename}")
+                        print(f"[Text Worker]   Right: {right_filename}")
                 else:
                     # Single page (cover or coloring)
                     page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
@@ -212,7 +249,8 @@ class GenerateImages:
                     
                     results_dict['image_urls'][return_key] = full_image_url
                     results_dict['image_bytes'][return_key] = full_image_bytes_data
-                    print(f"[Text Worker] Completed {page_key} as {return_key}")
+                    print(f"[Text Worker] ✓ Completed single page {page_key} as {return_key}")
+                    print(f"[Text Worker]   URL: {full_image_url}")
                 
                 text_queue.task_done()
                 
@@ -367,8 +405,8 @@ class GenerateImages:
         # Create text insertion queue
         text_queue = asyncio.Queue()
         
-        # Start text insertion workers (2 workers for parallel processing)
-        num_workers = 2
+        # Start text insertion workers (5 workers for parallel processing - max 5 concurrent text insertions)
+        num_workers = 5
         worker_tasks = []
         for i in range(num_workers):
             task = asyncio.create_task(
@@ -386,7 +424,7 @@ class GenerateImages:
             )
             worker_tasks.append(task)
         
-        print(f"[Queue System] Started {num_workers} text insertion workers")
+        print(f"[Queue System] Started {num_workers} text insertion workers (max {num_workers} concurrent)")
         
         image_urls = {}
         full_image_urls = {}  # Store full image URLs separately
