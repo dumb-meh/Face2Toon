@@ -20,6 +20,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.lib.utils import ImageReader
+from app.utils.image_analysis import get_text_placement_recommendation
+from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
 
@@ -30,8 +32,197 @@ class GenerateImages:
         self.model = "seedream-4-0-250828"
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
         self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
+    
+    async def _text_insertion_worker(
+        self,
+        text_queue: asyncio.Queue,
+        results_dict: Dict,
+        story: Dict[str, str],
+        font_size: int,
+        text_color: str,
+        dpi: int,
+        session_id: str,
+        upload_to_s3: bool,
+        book_uuid: str
+    ):
+        """Worker that processes text insertion queue"""
+        while True:
+            try:
+                item = await text_queue.get()
+                
+                if item is None:  # Poison pill to stop worker
+                    text_queue.task_done()
+                    break
+                
+                page_key, image_bytes, page_number, is_single_page = item
+                
+                print(f"[Text Worker] Processing {page_key} for text insertion...")
+                
+                # Get story text for this page
+                story_text = story.get(page_key, "")
+                
+                if story_text and not is_single_page:
+                    # Use image analysis to add text
+                    try:
+                        # Get text placement recommendation
+                        text_recommendation = await get_text_placement_recommendation(
+                            image_bytes, 
+                            story_text, 
+                            font_size
+                        )
+                        
+                        # Open image and add text
+                        img = Image.open(io.BytesIO(image_bytes))
+                        draw = ImageDraw.Draw(img)
+                        
+                        # Load font
+                        from pathlib import Path
+                        font_path = Path(__file__).resolve().parents[2] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                        try:
+                            if font_path.exists():
+                                font = ImageFont.truetype(str(font_path), font_size)
+                            else:
+                                font = ImageFont.load_default()
+                        except:
+                            font = ImageFont.load_default()
+                        
+                        # Draw text with outline
+                        outline_color = "black" if text_color.lower() == "white" else "white"
+                        for line_coord in text_recommendation.line_coordinates:
+                            x, y = line_coord.x, line_coord.y
+                            line_text = line_coord.text
+                            
+                            # Draw outline
+                            for adj_x in [-2, 0, 2]:
+                                for adj_y in [-2, 0, 2]:
+                                    draw.text((x + adj_x, y + adj_y), line_text, font=font, fill=outline_color)
+                            # Draw main text
+                            draw.text((x, y), line_text, font=font, fill=text_color)
+                        
+                        # Save image with text
+                        output_buffer = io.BytesIO()
+                        img.save(output_buffer, format='PNG', dpi=(dpi, dpi))
+                        output_buffer.seek(0)
+                        image_bytes = output_buffer.read()
+                        
+                        print(f"[Text Worker] Added text to {page_key}")
+                    except Exception as e:
+                        print(f"[Text Worker] Error adding text to {page_key}: {str(e)}")
+                        # Continue with image without text
+                
+                # Now split and save the image
+                img = Image.open(io.BytesIO(image_bytes))
+                
+                page_num_str = page_key.replace('page ', '').replace(' ', '_')
+                
+                # Save full image bytes
+                full_image_bytes = io.BytesIO()
+                img.save(full_image_bytes, format='PNG', dpi=(dpi, dpi))
+                full_image_bytes.seek(0)
+                full_image_bytes_data = full_image_bytes.read()
+                full_image_bytes.seek(0)
+                
+                # Upload/save full image
+                if upload_to_s3:
+                    full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
+                    upload_result = upload_file_object_to_s3(full_image_bytes, object_name=full_object_name)
+                    if upload_result['success']:
+                        full_image_url = upload_result['url']
+                    else:
+                        full_image_url = None
+                else:
+                    os.makedirs('uploads/generated_images', exist_ok=True)
+                    full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
+                    img.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
+                    base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                    base_url = base_url.rstrip('/')
+                    full_image_url = f"{base_url}/{full_image_filename}"
+                
+                # Split if not single page
+                if not is_single_page:
+                    middle_x = img.width // 2
+                    left_half = img.crop((0, 0, middle_x, img.height))
+                    right_half = img.crop((middle_x, 0, img.width, img.height))
+                    
+                    left_page_num = (page_number * 2) + 1
+                    right_page_num = (page_number * 2) + 2
+                    
+                    if upload_to_s3:
+                        # Upload split images
+                        left_buffer = io.BytesIO()
+                        right_buffer = io.BytesIO()
+                        left_half.save(left_buffer, format='PNG', dpi=(dpi, dpi))
+                        right_half.save(right_buffer, format='PNG', dpi=(dpi, dpi))
+                        left_buffer.seek(0)
+                        right_buffer.seek(0)
+                        
+                        left_bytes = left_buffer.read()
+                        right_bytes = right_buffer.read()
+                        left_buffer.seek(0)
+                        right_buffer.seek(0)
+                        
+                        left_object_name = f"facetoon/{book_uuid}/splitted/page_{left_page_num}.png"
+                        right_object_name = f"facetoon/{book_uuid}/splitted/page_{right_page_num}.png"
+                        
+                        left_result = upload_file_object_to_s3(left_buffer, object_name=left_object_name)
+                        right_result = upload_file_object_to_s3(right_buffer, object_name=right_object_name)
+                        
+                        if left_result['success'] and right_result['success']:
+                            results_dict['image_urls'][f'page {left_page_num}'] = left_result['url']
+                            results_dict['image_urls'][f'page {right_page_num}'] = right_result['url']
+                            results_dict['full_image_urls'][page_key] = full_image_url
+                            results_dict['image_bytes'][f'page {left_page_num}'] = left_bytes
+                            results_dict['image_bytes'][f'page {right_page_num}'] = right_bytes
+                            print(f"[Text Worker] Completed {page_key} -> pages {left_page_num}, {right_page_num}")
+                    else:
+                        # Save locally
+                        os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                        left_filename = f"uploads/generated_images/splitted/{session_id}_page_{left_page_num}.png"
+                        right_filename = f"uploads/generated_images/splitted/{session_id}_page_{right_page_num}.png"
+                        
+                        left_half.save(left_filename, format='PNG', dpi=(dpi, dpi))
+                        right_half.save(right_filename, format='PNG', dpi=(dpi, dpi))
+                        
+                        left_buffer = io.BytesIO()
+                        right_buffer = io.BytesIO()
+                        left_half.save(left_buffer, format='PNG', dpi=(dpi, dpi))
+                        right_half.save(right_buffer, format='PNG', dpi=(dpi, dpi))
+                        left_buffer.seek(0)
+                        right_buffer.seek(0)
+                        left_bytes = left_buffer.read()
+                        right_bytes = right_buffer.read()
+                        
+                        base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                        base_url = base_url.rstrip('/')
+                        results_dict['image_urls'][f'page {left_page_num}'] = f"{base_url}/{left_filename}"
+                        results_dict['image_urls'][f'page {right_page_num}'] = f"{base_url}/{right_filename}"
+                        results_dict['full_image_urls'][page_key] = full_image_url
+                        results_dict['image_bytes'][f'page {left_page_num}'] = left_bytes
+                        results_dict['image_bytes'][f'page {right_page_num}'] = right_bytes
+                        print(f"[Text Worker] Completed {page_key} -> pages {left_page_num}, {right_page_num}")
+                else:
+                    # Single page (cover or coloring)
+                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                    if page_num == 12:
+                        return_key = 'page 23'
+                    elif page_num == 13:
+                        return_key = 'page 24'
+                    else:
+                        return_key = page_key
+                    
+                    results_dict['image_urls'][return_key] = full_image_url
+                    results_dict['image_bytes'][return_key] = full_image_bytes_data
+                    print(f"[Text Worker] Completed {page_key} as {return_key}")
+                
+                text_queue.task_done()
+                
+            except Exception as e:
+                print(f"[Text Worker] Error processing item: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                text_queue.task_done()
 
-    def generate_first_two_page(
+    async def generate_first_two_page(
         self,
         prompts: Dict[str, str],
         page_connections: Optional[Dict[str, str]],
@@ -55,7 +246,7 @@ class GenerateImages:
         # Force sequential if requested
         force_sequential = sequential.lower() == "yes"
         
-        image_urls, full_image_urls, _ = self._generate_images_for_pages(
+        image_urls, full_image_urls, _ = await self._generate_images_for_pages(
             pages_to_generate,
             reference_images,
             page_connections=page_connections if force_sequential else None,
@@ -72,7 +263,7 @@ class GenerateImages:
         structured_urls = self._convert_dict_to_structured(image_urls, full_image_urls)
         return GenerateImageResponse(image_urls=structured_urls)
     
-    def generate_images(
+    async def generate_images(
         self,
         prompts: Dict[str, str],
         page_connections: Optional[Dict[str, str]],
@@ -111,7 +302,7 @@ class GenerateImages:
         
         # For parallel mode, ignore page_connections completely
         # For sequential mode, use page_connections
-        image_urls, full_image_urls, image_bytes = self._generate_images_for_pages(
+        image_urls, full_image_urls, image_bytes = await self._generate_images_for_pages(
             pages_to_generate,
             reference_images,
             page_connections if force_sequential else None,
@@ -125,7 +316,10 @@ class GenerateImages:
             page_1_url=page_1_url,
             should_split=True,  # Enable splitting for full generation
             upload_to_s3=True,  # Upload to S3 for full generation
-            book_uuid=book_uuid
+            book_uuid=book_uuid,
+            font_size=100,  # Updated font size
+            text_color="white",  # Default color
+            dpi=300
         )
         
         # Convert dict to structured format
@@ -141,7 +335,7 @@ class GenerateImages:
         
         return GenerateImageResponse(image_urls=structured_urls, pdf_url=pdf_url)
     
-    def _generate_images_for_pages(
+    async def _generate_images_for_pages(
         self,
         pages: Dict[str, str],
         reference_images: Optional[List[UploadFile]],
@@ -156,10 +350,44 @@ class GenerateImages:
         page_1_url: Optional[str] = None,
         should_split: bool = False,
         upload_to_s3: bool = False,
-        book_uuid: str = None
+        book_uuid: str = None,
+        font_size: int = 100,
+        text_color: str = "white",
+        dpi: int = 300
     ) -> tuple[Dict[str, str], Dict[str, str], Dict[str, bytes]]:
-        """Generate images for specified pages using SeeDream API
+        """Generate images for specified pages using SeeDream API with async queue-based text insertion
         Returns: (image_urls, full_image_urls, image_bytes)"""
+        # Create shared results dictionary for text workers
+        results_dict = {
+            'image_urls': {},
+            'full_image_urls': {},
+            'image_bytes': {}
+        }
+        
+        # Create text insertion queue
+        text_queue = asyncio.Queue()
+        
+        # Start text insertion workers (2 workers for parallel processing)
+        num_workers = 2
+        worker_tasks = []
+        for i in range(num_workers):
+            task = asyncio.create_task(
+                self._text_insertion_worker(
+                    text_queue,
+                    results_dict,
+                    story or {},
+                    font_size,
+                    text_color,
+                    dpi,
+                    session_id,
+                    upload_to_s3,
+                    book_uuid
+                )
+            )
+            worker_tasks.append(task)
+        
+        print(f"[Queue System] Started {num_workers} text insertion workers")
+        
         image_urls = {}
         full_image_urls = {}  # Store full image URLs separately
         image_bytes_for_pdf = {}  # Store image bytes for PDF generation
@@ -367,7 +595,9 @@ class GenerateImages:
                 print(f"  - Reference page URL: {reference_page if reference_page else 'None'}")
                 print(f"  - Page number for splitting: {current_page_number}")
                 
-                image_urls_dict = self._generate_single_image(
+                # Generate image and get resized bytes
+                image_bytes, is_single_page = await asyncio.to_thread(
+                    self._generate_single_image,
                     prompt,
                     reference_images_bytes_list if use_raw_image else None,
                     reference_page,
@@ -375,105 +605,35 @@ class GenerateImages:
                     age,
                     image_style,
                     page_key,
-                    story.get(page_key),
                     session_id,
                     reference_page_bytes=reference_page_bytes,
-                    should_split=should_split,
-                    page_number=current_page_number,
-                    upload_to_s3=upload_to_s3,
-                    book_uuid=book_uuid
+                    page_number=current_page_number
                 )
                 
-                # Store full URL and bytes for AI reference in next pages
-                # For pages with custom keys (coloring pages), get the actual URL value
-                if 'full' in image_urls_dict:
-                    generated_images[page_key] = image_urls_dict['full']
-                    print(f"  - Generated full URL: {image_urls_dict['full']}")
-                else:
-                    # Get the first URL value (for coloring pages with custom keys)
-                    url_value = next(iter(image_urls_dict.values()))
-                    generated_images[page_key] = url_value
-                    print(f"  - Generated URL: {url_value}")
+                # Add to text insertion queue immediately
+                await text_queue.put((page_key, image_bytes, current_page_number, is_single_page))
+                print(f"[Queue System] Added {page_key} to text insertion queue")
                 
-                # Store the generated image bytes for next page reference
-                # Download the full image and store bytes for sequential generation
-                if 'full_bytes' in image_urls_dict:
-                    generated_images_bytes[page_key] = image_urls_dict['full_bytes']
+                # Store bytes for sequential reference (next page needs previous page)
+                generated_images_bytes[page_key] = image_bytes
                 
-                # Store bytes for PDF generation
-                if should_split and page_key != 'page 0':
-                    # For split pages, store the left and right halves
-                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-                    is_coloring_page = page_num == 12 or page_num == 13
-                    
-                    if not is_coloring_page:
-                        # Extract split page bytes
-                        for key in image_urls_dict.keys():
-                            if key.startswith('page ') and key != 'full' and key != 'full_bytes':
-                                if f'{key}_bytes' in image_urls_dict:
-                                    image_bytes_for_pdf[key] = image_urls_dict[f'{key}_bytes']
-                    else:
-                        # Coloring pages - store with their actual key (page 23, 24)
-                        if 'full_bytes' in image_urls_dict:
-                            for key in image_urls_dict.keys():
-                                if key.startswith('page ') and key != 'full':
-                                    image_bytes_for_pdf[key] = image_urls_dict['full_bytes']
-                else:
-                    # Cover page or non-split page
-                    if 'full_bytes' in image_urls_dict:
-                        image_bytes_for_pdf[page_key] = image_urls_dict['full_bytes']
-                
-                # Add URLs to response based on whether page is split
-                if should_split and page_key != 'page 0':
-                    # Check if page was actually split or returned with a different key
-                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-                    is_coloring_page = page_num == 12 or page_num == 13
-                    
-                    if is_coloring_page:
-                        # Coloring pages are not split, add with their custom key (page 23, 24)
-                        for key, url in image_urls_dict.items():
-                            if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
-                                image_urls[key] = url
-                                print(f"  - {key}: {url}")
-                    else:
-                        # Split pages - add individual page URLs and store full URL
-                        if 'full' in image_urls_dict:
-                            full_image_urls[page_key] = image_urls_dict['full']
-                        for key, url in image_urls_dict.items():
-                            if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
-                                image_urls[key] = url
-                                print(f"  - {key}: {url}")
-                        page_counter += 1  # Increment for next image
-                else:
-                    # No splitting OR cover page - return full URL with original key
-                    image_urls[page_key] = image_urls_dict['full']
-                    # Only increment page_counter if this is NOT page 0
-                    if page_key != 'page 0':
-                        page_counter += 1
+                # Increment page counter for non-cover pages
+                if page_key != 'page 0' and not is_single_page:
+                    page_counter += 1
             
             # Clear generated_images dict to free memory after sequential generation
             generated_images.clear()
             print("Cleared generated_images cache after sequential generation")
         else:
             # Parallel generation - all pages use the reference image
-            # Generate 5 images at once to optimize performance
-            print(f"Parallel generation mode: Generating {len(pages)} pages in batches of {self.parallel_batch_size}")
+            # Generate all images concurrently
+            print(f"Parallel generation mode: Generating {len(pages)} pages concurrently")
             print(f"All pages will use the reference image, ignoring any page connections")
             
-            with ThreadPoolExecutor(max_workers=self.parallel_batch_size) as executor:
-                futures = {}
-                current_page_counter = page_counter
-                for page_key, prompt in pages.items():
-                    # Determine page_number for splitting calculation
-                    # Page 0 (cover) always uses 0 but won't be split
-                    # First splittable page (page 1) should use 0 to become pages 1-2
-                    if page_key == 'page 0':
-                        page_num_for_split = 0
-                    else:
-                        page_num_for_split = current_page_counter
-                        current_page_counter += 1
-                    
-                    future = executor.submit(
+            async def generate_and_queue(page_key, prompt, page_num_for_split):
+                """Generate image and add to text queue"""
+                try:
+                    image_bytes, is_single_page = await asyncio.to_thread(
                         self._generate_single_image,
                         prompt,
                         reference_images_bytes_list,  # All pages get reference images in parallel mode
@@ -482,71 +642,50 @@ class GenerateImages:
                         age,
                         image_style,
                         page_key,
-                        story.get(page_key),
                         session_id,
-                        should_split=should_split,
-                        page_number=page_num_for_split,
-                        upload_to_s3=upload_to_s3,
-                        book_uuid=book_uuid
+                        page_number=page_num_for_split
                     )
-                    futures[future] = page_key
+                    
+                    # Add to text insertion queue
+                    await text_queue.put((page_key, image_bytes, page_num_for_split, is_single_page))
+                    print(f"[Queue System] Added {page_key} to text insertion queue")
+                    
+                except Exception as e:
+                    print(f"Error generating image for {page_key}: {str(e)}")
+                    raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
+            
+            # Create tasks for all pages
+            generation_tasks = []
+            current_page_counter = page_counter
+            for page_key, prompt in pages.items():
+                # Determine page_number for splitting calculation
+                if page_key == 'page 0':
+                    page_num_for_split = 0
+                else:
+                    page_num_for_split = current_page_counter
+                    current_page_counter += 1
                 
-                for future in futures:
-                    page_key = futures[future]
-                    try:
-                        image_urls_dict = future.result()
-                        
-                        # Check if this page was actually split (has keys other than 'full')
-                        has_split_pages = any(key != 'full' for key in image_urls_dict.keys())
-                        
-                        # Store full URL for reference
-                        if 'full' in image_urls_dict:
-                            full_image_urls[page_key] = image_urls_dict['full']
-                        
-                        # Store bytes for PDF generation
-                        if should_split and page_key != 'page 0':
-                            # For split pages, store the left and right halves
-                            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-                            is_coloring_page = page_num == 12 or page_num == 13
-                            
-                            if not is_coloring_page:
-                                # Extract split page bytes
-                                for key in image_urls_dict.keys():
-                                    if key.startswith('page ') and key != 'full' and key != 'full_bytes':
-                                        if f'{key}_bytes' in image_urls_dict:
-                                            image_bytes_for_pdf[key] = image_urls_dict[f'{key}_bytes']
-                            else:
-                                # Coloring pages - store with their actual key (page 23, 24)
-                                if 'full_bytes' in image_urls_dict:
-                                    for key in image_urls_dict.keys():
-                                        if key.startswith('page ') and key != 'full':
-                                            image_bytes_for_pdf[key] = image_urls_dict['full_bytes']
-                        else:
-                            # Cover page or non-split page
-                            if 'full_bytes' in image_urls_dict:
-                                image_bytes_for_pdf[page_key] = image_urls_dict['full_bytes']
-                        
-                        if has_split_pages:
-                            # Page was split - add split page URLs
-                            for key, url in image_urls_dict.items():
-                                if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
-                                    image_urls[key] = url
-                                    print(f"  - {key}: {url}")
-                        else:
-                            # Page was not split (page 0, coloring pages, or splitting disabled)
-                            # Check if dict has a specific key (like 'page 23' for coloring pages)
-                            for key, url in image_urls_dict.items():
-                                if key != 'full' and key != 'full_bytes' and not key.endswith('_bytes'):
-                                    # Use the specific key (e.g., 'page 23', 'page 24')
-                                    image_urls[key] = url
-                                    print(f"  - {key}: {url}")
-                                elif key == 'full':
-                                    # No specific key, use original page_key
-                                    image_urls[page_key] = url
-                                    print(f"  - {page_key}: {url}")
-                    except Exception as e:
-                        print(f"Error generating image for {page_key}: {str(e)}")
-                        raise Exception(f"Failed to generate image for {page_key}: {str(e)}")
+                task = generate_and_queue(page_key, prompt, page_num_for_split)
+                generation_tasks.append(task)
+            
+            # Wait for all generations to complete
+            await asyncio.gather(*generation_tasks)
+        
+        # Signal workers to stop by adding poison pills
+        print(f"\n[Queue System] All images generated, waiting for text insertion to complete...")
+        for _ in range(num_workers):
+            await text_queue.put(None)
+        
+        # Wait for queue to be empty and workers to finish
+        await text_queue.join()
+        await asyncio.gather(*worker_tasks)
+        
+        print(f"[Queue System] All text insertions completed")
+        
+        # Extract results from shared dictionary
+        image_urls = results_dict['image_urls']
+        full_image_urls = results_dict['full_image_urls']
+        image_bytes_for_pdf = results_dict['image_bytes']
         
         print(f"\nFinal image_urls dictionary contains {len(image_urls)} pages:")
         for key in sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if x.split()[1].isdigit() else 0):
@@ -564,15 +703,12 @@ class GenerateImages:
         age: int,
         image_style: str,
         page_key: str,
-        story_text: Optional[str] = None,
         session_id: str = None,
         reference_page_bytes: Optional[bytes] = None,
-        should_split: bool = False,
-        page_number: int = None,
-        upload_to_s3: bool = False,
-        book_uuid: str = None
-    ) -> Dict[str, str]:
-        """Generate a single image using SeeDream API"""
+        page_number: int = None
+    ) -> tuple[bytes, bool]:
+        """Generate a single image using SeeDream API and return resized bytes
+        Returns: (image_bytes, is_single_page)"""
         try:
             # Enhance the prompt with detailed style and character instructions
             if page_key == "page 0":
@@ -678,22 +814,21 @@ Negative prompt: No changes to the character's face structure, facial proportion
             if not image_url:
                 raise Exception(f"No image URL in response: {result}")
             
-            # Download and resize image to final dimensions, optionally split
-            image_urls_dict = self._resize_image_to_print_size(image_url, page_key, session_id, should_split, page_number, upload_to_s3, book_uuid)
+            # Download and resize image to final dimensions
+            image_bytes, is_single_page = self._resize_image_to_print_size(image_url, page_key, session_id)
             
-            # Return the dict containing full URL and optionally split page URLs
-            return image_urls_dict
+            # Return bytes and is_single_page flag
+            return image_bytes, is_single_page
             
         except Exception as e:
             print(f"Error calling SeeDream API: {str(e)}")
             raise
     
-    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str, should_split: bool = False, page_number: int = None, upload_to_s3: bool = False, book_uuid: str = None) -> Dict[str, str]:
+    def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str) -> tuple[bytes, bool]:
         """Download image and resize to exact physical dimensions
         Pages 0, 12, 13: 8.5" x 8.5" at 300 DPI (cover and coloring pages)
         Other pages: 17" width x 8.5" height at 300 DPI
-        If should_split=True and page_key != 'page 0', split the image in the middle and save both halves as separate pages
-        If upload_to_s3=True, upload images to S3 in facetoon/{book_uuid}/ directory"""
+        Returns: (image_bytes, is_single_page)"""
         try:
             # Download the image from Seedream
             response = requests.get(image_url, timeout=60)
@@ -708,6 +843,9 @@ Negative prompt: No changes to the character's face structure, facial proportion
             
             # Physical dimensions in inches
             dpi = 300
+            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
+            
             if is_single_page:
                 # Square pages: cover and coloring pages
                 width_inches = 8.5
@@ -718,154 +856,26 @@ Negative prompt: No changes to the character's face structure, facial proportion
                 height_inches = 8.5
             
             # Calculate pixel dimensions from physical size
-            # 8.5 inches * 300 DPI = 2550 pixels (square)
-            # 17 inches * 300 DPI = 5100 pixels width
-            # 8.5 inches * 300 DPI = 2550 pixels height
             target_width = int(width_inches * dpi)
             target_height = int(height_inches * dpi)
             
-            # Resize image to target dimensions
-            # Using LANCZOS for high-quality resizing
+            # Resize image to target dimensions using LANCZOS for high-quality resizing
             resized_img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             
-            page_num_str = page_key.replace('page ', '').replace(' ', '_')
+            # Convert to bytes
+            output_buffer = io.BytesIO()
+            resized_img.save(output_buffer, format='PNG', dpi=(dpi, dpi))
+            output_buffer.seek(0)
+            image_bytes = output_buffer.read()
             
-            # Store full image bytes for sequential generation reference
-            full_image_bytes = io.BytesIO()
-            resized_img.save(full_image_bytes, format='PNG', dpi=(dpi, dpi))
-            full_image_bytes.seek(0)
-            full_image_bytes_data = full_image_bytes.read()
-            full_image_bytes.seek(0)  # Reset for upload
+            print(f"Generated {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
             
-            if upload_to_s3:
-                # Upload full image to S3
-                full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
-                upload_result = upload_file_object_to_s3(full_image_bytes, object_name=full_object_name)
-                
-                if upload_result['success']:
-                    full_image_url = upload_result['url']
-                    print(f"Uploaded {page_key} to S3: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
-                else:
-                    print(f"Failed to upload {page_key} to S3: {upload_result['message']}")
-                    # Fallback to original URL
-                    full_image_url = image_url
-            else:
-                # Save full image to uploads directory with proper DPI metadata
-                os.makedirs('uploads/generated_images', exist_ok=True)
-                full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
-                
-                # Save full image with DPI information embedded
-                resized_img.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
-                
-                print(f"Saved {page_key}: {target_width}x{target_height} pixels ({width_inches}\" x {height_inches}\" at {dpi} DPI)")
-                
-                # Construct base URL
-                base_url = os.getenv('domain') or os.getenv('BASE_URL')
-                base_url = base_url.rstrip('/')
-                full_image_url = f"{base_url}/{full_image_filename}"
-            
-            # NEVER split cover page (page 0), coloring pages (12, 13), or if splitting is disabled
-            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
-            
-            if not should_split or is_single_page:
-                # For coloring pages (12, 13), return them as pages 23, 24
-                # Because pages 1-11 when split = pages 1-22
-                if page_num == 12:
-                    return_key = 'page 23'
-                elif page_num == 13:
-                    return_key = 'page 24'
-                else:
-                    return_key = 'full'
-                
-                return {return_key: full_image_url, 'full_bytes': full_image_bytes_data}
-            
-            # Split the image in the middle for book pages
-            # Left half: 0 to 2550 pixels (8.5" x 8.5")
-            # Right half: 2550 to 5100 pixels (8.5" x 8.5")
-            middle_x = target_width // 2  # 2550
-            
-            left_half = resized_img.crop((0, 0, middle_x, target_height))
-            right_half = resized_img.crop((middle_x, 0, target_width, target_height))
-            
-            # Calculate page numbers: each image becomes 2 pages
-            # page_number is the image number (0, 1, 2, 3...)
-            # Image 1 -> page 1, page 2
-            # Image 2 -> page 3, page 4
-            left_page_num = (page_number * 2) + 1
-            right_page_num = (page_number * 2) + 2
-            
-            if upload_to_s3:
-                # Upload split images to S3
-                left_buffer = io.BytesIO()
-                right_buffer = io.BytesIO()
-                left_half.save(left_buffer, format='PNG', dpi=(dpi, dpi))
-                right_half.save(right_buffer, format='PNG', dpi=(dpi, dpi))
-                left_buffer.seek(0)
-                right_buffer.seek(0)
-                
-                # Read bytes for PDF before uploading
-                left_bytes = left_buffer.read()
-                right_bytes = right_buffer.read()
-                left_buffer.seek(0)  # Reset for upload
-                right_buffer.seek(0)
-                
-                left_object_name = f"facetoon/{book_uuid}/splitted/page_{left_page_num}.png"
-                right_object_name = f"facetoon/{book_uuid}/splitted/page_{right_page_num}.png"
-                
-                left_result = upload_file_object_to_s3(left_buffer, object_name=left_object_name)
-                right_result = upload_file_object_to_s3(right_buffer, object_name=right_object_name)
-                
-                if left_result['success'] and right_result['success']:
-                    left_url = left_result['url']
-                    right_url = right_result['url']
-                    print(f"  - Split and uploaded to S3: page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
-                else:
-                    print(f"  - Failed to upload split images to S3")
-                    # Fallback to full image URL
-                    left_url = full_image_url
-                    right_url = full_image_url
-            else:
-                # Create splitted directory
-                os.makedirs('uploads/generated_images/splitted', exist_ok=True)
-                
-                # Save split images
-                left_filename = f"uploads/generated_images/splitted/{session_id}_page_{left_page_num}.png"
-                right_filename = f"uploads/generated_images/splitted/{session_id}_page_{right_page_num}.png"
-                
-                left_half.save(left_filename, format='PNG', dpi=(dpi, dpi))
-                right_half.save(right_filename, format='PNG', dpi=(dpi, dpi))
-                
-                # Read bytes for PDF
-                left_buffer = io.BytesIO()
-                right_buffer = io.BytesIO()
-                left_half.save(left_buffer, format='PNG', dpi=(dpi, dpi))
-                right_half.save(right_buffer, format='PNG', dpi=(dpi, dpi))
-                left_buffer.seek(0)
-                right_buffer.seek(0)
-                left_bytes = left_buffer.read()
-                right_bytes = right_buffer.read()
-                
-                print(f"  - Split into page {left_page_num} and page {right_page_num} ({middle_x}x{target_height} each)")
-                
-                base_url = os.getenv('domain') or os.getenv('BASE_URL')
-                base_url = base_url.rstrip('/')
-                left_url = f"{base_url}/{left_filename}"
-                right_url = f"{base_url}/{right_filename}"
-            
-            return {
-                'full': full_image_url,
-                'full_bytes': full_image_bytes_data,
-                f'page {left_page_num}': left_url,
-                f'page {right_page_num}': right_url,
-                f'page {left_page_num}_bytes': left_bytes,
-                f'page {right_page_num}_bytes': right_bytes
-            }
+            # Return bytes and whether this is a single page
+            return image_bytes, is_single_page
             
         except Exception as e:
-            print(f"Error resizing image: {str(e)}")
-            # Return original URL if resize fails
-            return {'full': image_url}
+            print(f"Error generating/resizing image: {str(e)}")
+            raise Exception(f"Failed to generate image: {str(e)}")
     
     def _convert_dict_to_structured(self, image_urls: Dict[str, str], full_image_urls: Dict[str, str]) -> List[PageImageUrls]:
         """Convert flat dictionary to structured format with PageImageUrls objects"""

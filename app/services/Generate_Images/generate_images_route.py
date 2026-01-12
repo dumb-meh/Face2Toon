@@ -80,7 +80,7 @@ async def generate_first_two_page(
         if reference_image_3:
             reference_images.append(reference_image_3)
         
-        response = generate_images_service.generate_first_two_page(
+        response = await generate_images_service.generate_first_two_page(
             prompts=prompt_dict,
             page_connections=page_connections_dict,
             reference_images=reference_images,
@@ -176,7 +176,7 @@ async def generate_images(
             if reference_image_3:
                 reference_images.append(reference_image_3)
         
-        response = generate_images_service.generate_images(
+        response = await generate_images_service.generate_images(
             prompts=prompt_dict,
             page_connections=page_connections_dict,
             reference_images=reference_images if reference_images else None,

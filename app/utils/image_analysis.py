@@ -294,7 +294,7 @@ Return ONLY a JSON object in this exact format (no markdown, no extra text):
 async def add_text_with_face_avoidance(
     file: UploadFile = File(...),
     text: str = "Sample Text",
-    font_size: int = 40,
+    font_size: int = 100,
     color: str = "white"
 ):
     """
