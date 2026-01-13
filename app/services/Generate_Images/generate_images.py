@@ -248,6 +248,7 @@ class GenerateImages:
                         return_key = page_key
                     
                     results_dict['image_urls'][return_key] = full_image_url
+                    results_dict['full_image_urls'][page_key] = full_image_url  # Also store in full_image_urls for consistency
                     results_dict['image_bytes'][return_key] = full_image_bytes_data
                     print(f"[Text Worker] ✓ Completed single page {page_key} as {return_key}")
                     print(f"[Text Worker]   URL: {full_image_url}")
@@ -920,6 +921,10 @@ Negative prompt: No changes to the character's face structure, facial proportion
         structured_pages = []
         processed_pages = set()
         
+        print(f"\n[Convert] Converting URLs to structured format")
+        print(f"[Convert] image_urls keys: {sorted(image_urls.keys())}")
+        print(f"[Convert] full_image_urls keys: {sorted(full_image_urls.keys())}")
+        
         # Sort keys by page number
         sorted_keys = sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if 'page' in x and x.split()[1].isdigit() else 0)
         
@@ -950,6 +955,8 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             # Get full URL from full_image_urls dict
                             full_url = full_image_urls.get(original_page_key, "")
                             
+                            print(f"[Convert] Split pair: {key} + {right_key} -> {original_page_key} (full: {full_url[:50] if full_url else 'None'}...)")
+                            
                             page_obj = PageImageUrls(
                                 name=original_page_key,
                                 fullPageUrl=full_url,
@@ -960,7 +967,8 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             processed_pages.add(page_num)
                             processed_pages.add(right_page_num)
                         else:
-                            # Single page
+                            # Single page that happens to be odd
+                            print(f"[Convert] Single page: {key}")
                             page_obj = PageImageUrls(
                                 name=key,
                                 fullPageUrl=url,
@@ -969,9 +977,22 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             )
                             structured_pages.append(page_obj)
                             processed_pages.add(page_num)
-                    elif page_num == 0 or page_num >= 23 or page_num % 2 == 0:
-                        # Cover page, coloring pages, or even numbered pages (if not already paired)
+                    elif page_num == 0 or page_num >= 23:
+                        # Cover page (0) or coloring pages (23, 24)
                         if page_num not in processed_pages:
+                            print(f"[Convert] Cover/coloring page: {key}")
+                            page_obj = PageImageUrls(
+                                name=key,
+                                fullPageUrl=url,
+                                leftUrl=None,
+                                rightUrl=None
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(page_num)
+                    elif page_num % 2 == 0:
+                        # Even numbered pages that weren't paired (shouldn't happen normally)
+                        if page_num not in processed_pages:
+                            print(f"[Convert] Unpaired even page: {key}")
                             page_obj = PageImageUrls(
                                 name=key,
                                 fullPageUrl=url,
@@ -981,6 +1002,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             structured_pages.append(page_obj)
                             processed_pages.add(page_num)
         
+        print(f"[Convert] Created {len(structured_pages)} structured page objects")
         return structured_pages
     
     def _generate_pdf(
