@@ -4,11 +4,12 @@ from typing import Optional, Dict, List
 class ReGenerateImageRequest(BaseModel):
    prompt:str
    story:str
-   iamge_url:str
+   iamge_url:str = Field(description="URL of the image to be regenerated")
    gender: str = Field(description="Child's gender")
    age: int = Field(description="Child's age")
    image_style: str = Field(description="Desired illustration style")
    page_type:str = Field(description="Type of the page")
+   page_number:int = Field(description="Page number to be regenerated")
 
 class PageImageUrls(BaseModel):
     fullPageUrl: str = Field(description="Full original generated image URL")

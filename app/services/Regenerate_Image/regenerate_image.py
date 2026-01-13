@@ -4,12 +4,13 @@ import re
 import requests
 import base64
 import boto3
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from .regenerate_image_schema import ReGenerateImageRequest, ReGenerateImageResponse, PageImageUrls
 from app.utils.upload_to_bucket import upload_file_object_to_s3, delete_file_from_s3
+from app.utils.image_analysis import get_text_placement_recommendation
 
 load_dotenv()
 
@@ -80,7 +81,8 @@ class ReGenerateImage:
                         request.image_style,
                         s3_object_key,
                         left_key,
-                        right_key
+                        right_key,
+                        request.page_number
                     )
                     
                     # Wait for all tasks
@@ -294,9 +296,13 @@ class ReGenerateImage:
         image_style: str,
         full_s3_key: str,
         left_s3_key: str,
-        right_s3_key: str
+        right_s3_key: str,
+        page_number: int,
+        font_size: int = 100,
+        text_color: str = "white",
+        dpi: int = 300
     ) -> PageImageUrls:
-        """Generate a corrected full image, split it, and upload all three versions"""
+        """Generate a corrected full image, add text, split it, and upload all three versions"""
         try:
             # Create enhanced prompt with error correction instructions
             enhanced_prompt = self._create_correction_prompt(prompt, story, gender, age, image_style)
@@ -356,6 +362,39 @@ class ReGenerateImage:
             if img.size != (width, height):
                 img = img.resize((width, height), Image.Resampling.LANCZOS)
             
+            # Add text to the image if story is provided
+            if story and story.strip():
+                print(f"Adding text to regenerated image...")
+                try:
+                    # Use image analysis to determine best text placement
+                    img_buffer = io.BytesIO()
+                    img.save(img_buffer, format='PNG')
+                    img_buffer.seek(0)
+                    img_bytes = img_buffer.read()
+                    
+                    # Get text placement recommendation from image analysis
+                    placement_result = get_text_placement_recommendation(
+                        image_bytes=img_bytes,
+                        story_text=story,
+                        font_size=font_size,
+                        text_color=text_color
+                    )
+                    
+                    if placement_result and placement_result.get('success'):
+                        # Get the image with text already added
+                        img_with_text_bytes = placement_result.get('image_bytes')
+                        if img_with_text_bytes:
+                            img = Image.open(io.BytesIO(img_with_text_bytes))
+                            print(f"Text successfully added to image using image analysis")
+                        else:
+                            print("Warning: No image bytes returned from text placement")
+                    else:
+                        print(f"Warning: Text placement failed or returned no result")
+                        
+                except Exception as text_error:
+                    print(f"Error adding text to regenerated image: {str(text_error)}")
+                    # Continue without text if it fails
+            
             # Save full image to BytesIO
             full_img_buffer = io.BytesIO()
             img.save(full_img_buffer, format='PNG', dpi=(300, 300))
@@ -379,6 +418,15 @@ class ReGenerateImage:
             
             left_half = img.crop((0, 0, middle_x, height))
             right_half = img.crop((middle_x, 0, width, height))
+            
+            # Calculate page numbers based on page_number parameter
+            # page_number is the image number (e.g., 1, 2, 3...)
+            # Left page = (page_number * 2) + 1
+            # Right page = (page_number * 2) + 2
+            left_page_num = (page_number * 2) + 1
+            right_page_num = (page_number * 2) + 2
+            
+            print(f"Splitting image {page_number} into pages {left_page_num} and {right_page_num}")
             
             # Save left half
             left_img_buffer = io.BytesIO()
