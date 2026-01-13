@@ -473,8 +473,8 @@ class GenerateImages:
                     upload_result = upload_file_object_to_s3(page_0_buffer, object_name=page_0_object_name)
                     
                     if upload_result['success']:
-                        image_urls['page 0'] = upload_result['url']
-                        image_bytes_for_pdf['page 0'] = page_0_bytes
+                        results_dict['image_urls']['page 0'] = upload_result['url']
+                        results_dict['image_bytes']['page 0'] = page_0_bytes
                         print(f"Uploaded page 0 to S3: {upload_result['url']}")
                     else:
                         print(f"Failed to upload page 0 to S3: {upload_result['message']}")
@@ -522,7 +522,7 @@ class GenerateImages:
                         full_page_1_result = upload_file_object_to_s3(full_page_1_buffer, object_name=full_page_1_object_name)
                         
                         if full_page_1_result['success']:
-                            full_image_urls['page 1'] = full_page_1_result['url']
+                            results_dict['full_image_urls']['page 1'] = full_page_1_result['url']
                             print(f"Uploaded full page 1 to S3: {full_page_1_result['url']}")
                         
                         # Upload split images to S3
@@ -546,11 +546,11 @@ class GenerateImages:
                         right_result = upload_file_object_to_s3(right_buffer, object_name=right_object_name)
                         
                         if left_result['success'] and right_result['success']:
-                            image_urls['page 1'] = left_result['url']
-                            image_urls['page 2'] = right_result['url']
+                            results_dict['image_urls']['page 1'] = left_result['url']
+                            results_dict['image_urls']['page 2'] = right_result['url']
                             # Store bytes for PDF (already read before upload)
-                            image_bytes_for_pdf['page 1'] = left_bytes_for_pdf
-                            image_bytes_for_pdf['page 2'] = right_bytes_for_pdf
+                            results_dict['image_bytes']['page 1'] = left_bytes_for_pdf
+                            results_dict['image_bytes']['page 2'] = right_bytes_for_pdf
                             print(f"Uploaded split page 1 to S3")
                             print(f"  - page 1: {left_result['url']}")
                             print(f"  - page 2: {right_result['url']}")
@@ -559,21 +559,38 @@ class GenerateImages:
                     else:
                         # Save locally
                         os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                        os.makedirs('uploads/generated_images', exist_ok=True)
                         left_filename = f"uploads/generated_images/splitted/{session_id}_page_1.png"
                         right_filename = f"uploads/generated_images/splitted/{session_id}_page_2.png"
+                        full_filename = f"uploads/generated_images/{session_id}_image_1.png"
                         
                         left_half.save(left_filename, format='PNG', dpi=(300, 300))
                         right_half.save(right_filename, format='PNG', dpi=(300, 300))
+                        img.save(full_filename, format='PNG', dpi=(300, 300))
+                        
+                        # Read bytes for PDF
+                        left_buffer_for_pdf = io.BytesIO()
+                        right_buffer_for_pdf = io.BytesIO()
+                        left_half.save(left_buffer_for_pdf, format='PNG', dpi=(300, 300))
+                        right_half.save(right_buffer_for_pdf, format='PNG', dpi=(300, 300))
+                        left_buffer_for_pdf.seek(0)
+                        right_buffer_for_pdf.seek(0)
+                        left_bytes_for_pdf = left_buffer_for_pdf.read()
+                        right_bytes_for_pdf = right_buffer_for_pdf.read()
                         
                         base_url = os.getenv('domain') or os.getenv('BASE_URL')
                         base_url = base_url.rstrip('/')
                         
-                        image_urls['page 1'] = f"{base_url}/{left_filename}"
-                        image_urls['page 2'] = f"{base_url}/{right_filename}"
+                        results_dict['image_urls']['page 1'] = f"{base_url}/{left_filename}"
+                        results_dict['image_urls']['page 2'] = f"{base_url}/{right_filename}"
+                        results_dict['full_image_urls']['page 1'] = f"{base_url}/{full_filename}"
+                        results_dict['image_bytes']['page 1'] = left_bytes_for_pdf
+                        results_dict['image_bytes']['page 2'] = right_bytes_for_pdf
                         
                         print(f"Split provided page 1 into page 1 and page 2")
-                        print(f"  - page 1: {image_urls['page 1']}")
-                        print(f"  - page 2: {image_urls['page 2']}")
+                        print(f"  - page 1: {results_dict['image_urls']['page 1']}")
+                        print(f"  - page 2: {results_dict['image_urls']['page 2']}")
+                        print(f"  - full: {results_dict['full_image_urls']['page 1']}")
                     
                     page_counter_start = 1  # Next generated image will be image 1 (pages 3-4)
                 else:
@@ -701,8 +718,14 @@ class GenerateImages:
                 if page_key == 'page 0':
                     page_num_for_split = 0
                 else:
+                    # Check if this is a single page (coloring pages 12, 13)
+                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else 0
+                    is_coloring_page = page_num == 12 or page_num == 13
+                    
                     page_num_for_split = current_page_counter
-                    current_page_counter += 1
+                    # Only increment counter for pages that will be split (not coloring pages)
+                    if not is_coloring_page:
+                        current_page_counter += 1
                 
                 task = generate_and_queue(page_key, prompt, page_num_for_split)
                 generation_tasks.append(task)
@@ -759,7 +782,7 @@ Main character: {age}-year-old {gender} child matching the reference image exact
 Composition suitable for a book cover with space for title text placement.
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
 The child's face, features, hair, and appearance must exactly match the reference image provided.
-DO NOT include any text or letters in the image.
+ABSOLUTELY NO TEXT, LETTERS, WORDS, TITLES, LABELS, OR ANY WRITTEN CHARACTERS IN THE IMAGE. Pure illustration only.
 """.strip()
             else:
                 # Check if this is a coloring page (pages 12 or 13)
@@ -775,8 +798,8 @@ Composition suitable for a children's storybook with space for text placement on
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
 CRITICAL: Maintain EXACT character appearance from the style reference - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. If clothing colors or patterns are specified in the prompt, follow them precisely without variation.
 Focus on: implementing the exact scene, actions, setting, and clothing details as described while preserving all character appearance characteristics.
-DO NOT include any text, letters, or words in the image.
-Negative prompt: No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance. No text or letters in the image.
+ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS ANYWHERE IN THE IMAGE. The image must be purely visual with no typography of any kind.
+Negative prompt: No text, no letters, no words, no signs, no labels, no captions, no written language, no typography, no alphabet characters, no numbers in text form. No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance.
 """.strip()
             
             # Prepare headers
@@ -941,7 +964,8 @@ Negative prompt: No changes to the character's face structure, facial proportion
                         continue
                     
                     # Check if this is part of a split pair (odd pages 1, 3, 5, etc. pair with even pages 2, 4, 6, etc.)
-                    if page_num % 2 == 1 and page_num > 0:
+                    # Exception: pages 23 and 24 are separate single pages (coloring pages), not a split pair
+                    if page_num % 2 == 1 and page_num > 0 and page_num < 23:
                         right_page_num = page_num + 1
                         right_key = f'page {right_page_num}'
                         
@@ -967,7 +991,7 @@ Negative prompt: No changes to the character's face structure, facial proportion
                             processed_pages.add(page_num)
                             processed_pages.add(right_page_num)
                         else:
-                            # Single page that happens to be odd
+                            # Single page that happens to be odd numbered (but not 23)
                             print(f"[Convert] Single page: {key}")
                             page_obj = PageImageUrls(
                                 name=key,
