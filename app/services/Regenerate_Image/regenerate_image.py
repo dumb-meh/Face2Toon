@@ -155,9 +155,10 @@ class ReGenerateImage:
             image_number = int(match.group(1))
             extension = match.group(2)
             
-            # Calculate page numbers: image N -> pages (N*2+1) and (N*2+2)
-            left_page = (image_number * 2) + 1
-            right_page = (image_number * 2) + 2
+            # Calculate page numbers: image 1 -> pages 1-2, image 2 -> pages 3-4, etc.
+            # Formula: image N -> pages ((N-1)*2+1) and ((N-1)*2+2)
+            left_page = ((image_number - 1) * 2) + 1
+            right_page = ((image_number - 1) * 2) + 2
             
             # Build split image keys (replace 'full' with 'splitted' in directory)
             split_directory = directory.replace('/full', '/splitted')
@@ -182,10 +183,13 @@ class ReGenerateImage:
         """Delete the old image from S3"""
         try:
             result = delete_file_from_s3(bucket_name=self.bucket_name, object_name=s3_object_key)
-            print(f"Old image deletion: {result['message']}")
+            if result['success']:
+                print(f"Deleted old image: {s3_object_key}")
+            else:
+                print(f"Failed to delete {s3_object_key}: {result['message']}")
             return result
         except Exception as e:
-            print(f"Error deleting old image: {str(e)}")
+            print(f"Error deleting old image {s3_object_key}: {str(e)}")
             # Don't raise, just log - regeneration is more important
             return {'success': False, 'message': str(e)}
     
@@ -372,27 +376,51 @@ class ReGenerateImage:
                     img_buffer.seek(0)
                     img_bytes = img_buffer.read()
                     
-                    # Get text placement recommendation from image analysis
-                    placement_result = get_text_placement_recommendation(
-                        image_bytes=img_bytes,
-                        story_text=story,
-                        font_size=font_size,
-                        text_color=text_color
-                    )
+                    # Get text placement recommendation from image analysis (async function)
+                    import asyncio
+                    text_recommendation = asyncio.run(get_text_placement_recommendation(
+                        img_bytes,
+                        story,
+                        font_size
+                    ))
                     
-                    if placement_result and placement_result.get('success'):
-                        # Get the image with text already added
-                        img_with_text_bytes = placement_result.get('image_bytes')
-                        if img_with_text_bytes:
-                            img = Image.open(io.BytesIO(img_with_text_bytes))
-                            print(f"Text successfully added to image using image analysis")
+                    # Open image for drawing
+                    draw = ImageDraw.Draw(img)
+                    
+                    # Load font
+                    from pathlib import Path
+                    font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    try:
+                        if font_path.exists():
+                            font = ImageFont.truetype(str(font_path), font_size)
+                            print(f"Loaded Comic Relief font at size {font_size}")
                         else:
-                            print("Warning: No image bytes returned from text placement")
-                    else:
-                        print(f"Warning: Text placement failed or returned no result")
+                            font = ImageFont.load_default()
+                            print(f"Font not found, using default")
+                    except Exception as font_err:
+                        font = ImageFont.load_default()
+                        print(f"Font load error: {font_err}, using default")
+                    
+                    # Draw text with outline
+                    outline_color = "black" if text_color.lower() == "white" else "white"
+                    
+                    for line_coord in text_recommendation.line_coordinates:
+                        x, y = line_coord.x, line_coord.y
+                        line_text = line_coord.text
+                        
+                        # Draw outline
+                        for adj_x in [-2, 0, 2]:
+                            for adj_y in [-2, 0, 2]:
+                                draw.text((x + adj_x, y + adj_y), line_text, font=font, fill=outline_color)
+                        # Draw main text
+                        draw.text((x, y), line_text, font=font, fill=text_color)
+                    
+                    print(f"Text successfully added to regenerated image")
                         
                 except Exception as text_error:
                     print(f"Error adding text to regenerated image: {str(text_error)}")
+                    import traceback
+                    traceback.print_exc()
                     # Continue without text if it fails
             
             # Save full image to BytesIO

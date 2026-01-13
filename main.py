@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from app.services.Generate_Story.generate_story_route import router as generate_story_router
 from app.services.Generate_Images.generate_images_route import router as generate_images_router
 from app.services.Regenerate_Image.regenerate_image_route import router as regenerate_images_router
+from app.services.Create_Character.create_character_route import router as create_character_router
 from app.utils import image_analysis as image_analysis_module
 import os
 import asyncio
@@ -47,7 +48,7 @@ app.include_router(generate_images_router, prefix="/api/v1")
 app.include_router(regenerate_images_router, prefix="/api/v1")
 # Include image analysis router
 app.include_router(image_analysis_module.router, prefix="/api/v1")
-
+app.include_router(create_character_router, prefix="/api/v1")
 # Background task for cleaning old files
 cleanup_task = None
 
