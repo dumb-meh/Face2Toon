@@ -982,6 +982,60 @@ Negative prompt: No text, no letters, no words, no signs, no labels, no captions
                 if page_num_str.isdigit():
                     page_num = int(page_num_str)
                     
+                    if page_num in processed_pages:
+                        continue
+                    
+                    # Special handling: Pair pages 23-24 as "page 12" (coloring pages)
+                    if page_num == 23:
+                        right_key = 'page 24'
+                        if right_key in image_urls:
+                            page_obj = PageImageUrls(
+                                name='page 12',
+                                fullPageUrl='',
+                                leftUrl=url,
+                                rightUrl=image_urls[right_key]
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(23)
+                            processed_pages.add(24)
+                        continue
+                    
+                    # Cover page (page 0) - single image
+                    if page_num == 0:
+                        page_obj = PageImageUrls(
+                            name=key,
+                            fullPageUrl=url,
+                            leftUrl=None,
+                            rightUrl=None
+                        )
+                        structured_pages.append(page_obj)
+                        processed_pages.add(page_num)
+                        continue
+                    
+                    # Regular split pairs (1-2, 3-4, etc.) - stops before page 23
+                    if page_num % 2 == 1 and page_num < 23:
+                        right_page_num = page_num + 1
+                        right_key = f'page {right_page_num}'
+                        
+                        if right_key in image_urls:
+                            # Calculate original page number
+                            original_page_num = (page_num + 1) // 2
+                            original_page_key = f'page {original_page_num}'
+                            full_url = full_image_urls.get(original_page_key, '')
+                            
+                            page_obj = PageImageUrls(
+                                name=original_page_key,
+                                fullPageUrl=full_url,
+                                leftUrl=url,
+                                rightUrl=image_urls[right_key]
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(page_num)
+                            processed_pages.add(right_page_num)
+                page_num_str = key.split()[1]
+                if page_num_str.isdigit():
+                    page_num = int(page_num_str)
+                    
                     # Skip if already processed
                     if page_num in processed_pages:
                         continue

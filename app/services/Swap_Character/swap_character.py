@@ -717,7 +717,22 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, OR ANY WRITTEN CHARACTERS IN 
                     if page_num in processed_pages:
                         continue
                     
-                    # Split pairs (1-2, 3-4, etc.) - except 23, 24
+                    # Special handling: Pair pages 23-24 as "page 12" (coloring pages)
+                    if page_num == 23:
+                        right_key = 'page 24'
+                        if right_key in image_urls:
+                            page_obj = PageImageUrls(
+                                name='page 12',
+                                fullPageUrl='',
+                                leftUrl=url,
+                                rightUrl=image_urls[right_key]
+                            )
+                            structured_pages.append(page_obj)
+                            processed_pages.add(23)
+                            processed_pages.add(24)
+                        continue
+                    
+                    # Split pairs (1-2, 3-4, etc.)
                     if page_num % 2 == 1 and page_num > 0 and page_num < 23:
                         right_page_num = page_num + 1
                         right_key = f'page {right_page_num}'
