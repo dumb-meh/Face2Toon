@@ -7,6 +7,7 @@ import boto3
 import asyncio
 import uuid
 import time
+import openai
 from datetime import datetime
 from typing import List, Dict
 from PIL import Image, ImageDraw, ImageFont
@@ -33,6 +34,7 @@ class SwapCharacter:
             region_name=os.getenv('S3_REGION', 'eu-north-1')
         )
         self.bucket_name = os.getenv('S3_BUCKET_NAME', 'mycvconnect')
+        self.openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
     async def swap_character(
         self,
@@ -66,6 +68,12 @@ class SwapCharacter:
                 ref_img.file.seek(0)
                 reference_images_bytes_list.append(img_bytes)
             
+            # Update prompts and story with new character details using LLM
+            print(f"\n=== Updating prompts and story for new character ===")
+            updated_prompts = await self._update_text_with_llm(prompts, character_name, gender, age, is_story=False)
+            updated_story = await self._update_text_with_llm(story, character_name, gender, age, is_story=True)
+            print(f"✓ Updated {len(updated_prompts)} prompts and {len(updated_story)} story entries")
+            
             # Results dictionary
             image_urls = {}
             full_image_urls = {}
@@ -74,16 +82,31 @@ class SwapCharacter:
             # Process pages in parallel
             tasks = []
             
+            # Page 0: Cover page (single square image)
+            if len(full_page_urls) > 0:
+                cover_url = full_page_urls[0]
+                task = self._generate_cover_page(
+                    page_url=cover_url,
+                    prompt=updated_prompts.get('page 0', ''),
+                    character_name=character_name,
+                    gender=gender,
+                    age=age,
+                    image_style=image_style,
+                    reference_images_bytes=reference_images_bytes_list,
+                    book_uuid=book_uuid
+                )
+                tasks.append(task)
+            
             # Pages 1-11: Swap character using existing images as composition reference
-            for idx, page_url in enumerate(full_page_urls):
-                page_key = f"page {idx + 1}"
-                page_num = idx + 1
+            for idx, page_url in enumerate(full_page_urls[1:], start=1):
+                page_key = f"page {idx}"
+                page_num = idx
                 
                 task = self._swap_character_in_page(
                     page_key=page_key,
                     page_url=page_url,
-                    prompt=prompts.get(page_key, ""),
-                    story_text=story.get(page_key, ""),
+                    prompt=updated_prompts.get(page_key, ""),
+                    story_text=updated_story.get(page_key, ""),
                     character_name=character_name,
                     gender=gender,
                     age=age,
@@ -95,10 +118,10 @@ class SwapCharacter:
                 tasks.append(task)
             
             # Pages 12-13: Generate coloring pages from scratch
-            if 'page 12' in prompts:
+            if 'page 12' in updated_prompts:
                 task = self._generate_coloring_page(
                     page_key='page 12',
-                    prompt=prompts['page 12'],
+                    prompt=updated_prompts['page 12'],
                     character_name=character_name,
                     gender=gender,
                     age=age,
@@ -108,10 +131,10 @@ class SwapCharacter:
                 )
                 tasks.append(task)
             
-            if 'page 13' in prompts:
+            if 'page 13' in updated_prompts:
                 task = self._generate_coloring_page(
                     page_key='page 13',
-                    prompt=prompts['page 13'],
+                    prompt=updated_prompts['page 13'],
                     character_name=character_name,
                     gender=gender,
                     age=age,
@@ -158,6 +181,138 @@ class SwapCharacter:
             print(f"Error in swap_character: {str(e)}")
             import traceback
             traceback.print_exc()
+            raise
+    
+    async def _update_text_with_llm(
+        self,
+        text_dict: Dict[str, str],
+        new_character_name: str,
+        new_gender: str,
+        new_age: int,
+        is_story: bool = False
+    ) -> Dict[str, str]:
+        """Use LLM to update character names and pronouns in prompts/story"""
+        try:
+            updated_dict = {}
+            
+            for key, text in text_dict.items():
+                if not text or not text.strip():
+                    updated_dict[key] = text
+                    continue
+                
+                # Create LLM prompt
+                text_type = "story text" if is_story else "image generation prompt"
+                pronoun_guide = "he/him/his" if new_gender.lower() == "male" else "she/her/hers"
+                
+                llm_prompt = f"""You are updating a children's storybook {text_type}. Replace the old character's name and pronouns with new ones.
+
+New character details:
+- Name: {new_character_name}
+- Gender: {new_gender}
+- Age: {new_age} years old
+- Pronouns: {pronoun_guide}
+
+Original {text_type}:
+{text}
+
+Instructions:
+1. Replace any character name with "{new_character_name}"
+2. Update all pronouns to match {pronoun_guide}
+3. Keep everything else exactly the same - same story, same scene, same actions
+4. Return ONLY the updated text, nothing else
+
+Updated {text_type}:"""
+                
+                # Call OpenAI
+                response = await asyncio.to_thread(
+                    self.openai_client.chat.completions.create,
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that updates character names and pronouns in text while keeping everything else unchanged."},
+                        {"role": "user", "content": llm_prompt}
+                    ],
+                    temperature=0.3
+                )
+                
+                updated_text = response.choices[0].message.content.strip()
+                updated_dict[key] = updated_text
+                
+            return updated_dict
+            
+        except Exception as e:
+            print(f"Error updating text with LLM: {str(e)}")
+            # Fallback: return original text if LLM fails
+            return text_dict
+    
+    async def _generate_cover_page(
+        self,
+        page_url: str,
+        prompt: str,
+        character_name: str,
+        gender: str,
+        age: int,
+        image_style: str,
+        reference_images_bytes: List[bytes],
+        book_uuid: str
+    ) -> Dict:
+        """Generate cover page (page 0) - single square image"""
+        try:
+            print(f"\n[Cover] Generating cover page...")
+            
+            # Download existing cover image
+            print(f"[Cover] Downloading existing cover: {page_url}")
+            existing_img_response = requests.get(page_url, timeout=60)
+            existing_img_response.raise_for_status()
+            existing_img_bytes = existing_img_response.content
+            
+            # Create enhanced prompt
+            enhanced_prompt = f"""
+Children's storybook cover page in {image_style} style.
+Main character: {age}-year-old {gender} child named {character_name} matching the reference image exactly.
+{prompt}
+Maintain the exact same composition, layout, and design from the style reference.
+CRITICAL: Only change the character's appearance to match the new reference images.
+ABSOLUTELY NO TEXT, LETTERS, WORDS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
+""".strip()
+            
+            # Generate new cover with character swap (square format: 2550x2550)
+            img_bytes = await asyncio.to_thread(
+                self._generate_swapped_image,
+                enhanced_prompt,
+                reference_images_bytes,
+                existing_img_bytes,
+                gender,
+                age,
+                image_style,
+                width=2550,
+                height=2550
+            )
+            
+            # Upload to S3
+            img_buffer = io.BytesIO(img_bytes)
+            object_name = f"facetoon/{book_uuid}/page_0.png"
+            
+            upload_result = upload_file_object_to_s3(img_buffer, object_name=object_name)
+            
+            if not upload_result['success']:
+                raise ValueError(f"Failed to upload cover page: {upload_result['message']}")
+            
+            print(f"[Cover] ✓ Generated cover page as page 0")
+            
+            return {
+                'image_urls': {
+                    'page 0': upload_result['url']
+                },
+                'full_image_urls': {
+                    'page 0': upload_result['url']
+                },
+                'image_bytes': {
+                    'page 0': img_bytes
+                }
+            }
+            
+        except Exception as e:
+            print(f"[Cover] Error generating cover page: {str(e)}")
             raise
     
     async def _swap_character_in_page(
@@ -386,7 +541,9 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
         existing_image_bytes: bytes,
         gender: str,
         age: int,
-        image_style: str
+        image_style: str,
+        width: int = 5100,
+        height: int = 2550
     ) -> bytes:
         """Generate image with swapped character using SeeDream API"""
         try:
@@ -395,9 +552,6 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json'
             }
-            
-            # Double-page spread: 17" x 8.5" at 300 DPI = 5100x2550 pixels
-            width, height = 5100, 2550
             
             # Encode images to base64
             reference_image_base64 = base64.b64encode(reference_images_bytes[0]).decode('utf-8')
