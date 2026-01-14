@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import time
 from dotenv import load_dotenv
 from .generate_images_schema import GenerateImageResponse, PageImageUrls
 from typing import Dict, Optional, List
@@ -273,6 +274,9 @@ class GenerateImages:
         story: Optional[Dict[str, str]] = None
     ) -> GenerateImageResponse:
         """Generate images for page 0 (cover) and page 1 only"""
+        start_time = time.time()
+        print(f"\n=== Starting First Two Pages Generation ===")
+        print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"DEBUG generate_first_two_page: prompts type={type(prompts)}, page_connections type={type(page_connections)}")
         
         # Generate unique session ID for this request
@@ -300,6 +304,14 @@ class GenerateImages:
         
         # Convert dict to structured format
         structured_urls = self._convert_dict_to_structured(image_urls, full_image_urls)
+        
+        # Calculate and log total execution time
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"\n=== First Two Pages Generation Complete ===")
+        print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Total Execution Time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+        
         return GenerateImageResponse(image_urls=structured_urls)
     
     async def generate_images(
@@ -317,6 +329,10 @@ class GenerateImages:
         page_1_url: Optional[str] = None
     ) -> GenerateImageResponse:
         """Generate images for all pages or skip cover/page 1 if they exist"""
+        start_time = time.time()
+        print(f"\n=== Starting Full Image Generation ===")
+        print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
         # Generate unique session ID for this request
         session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         # Generate unique book UUID for S3 directory structure
@@ -371,6 +387,13 @@ class GenerateImages:
             session_id=session_id,
             upload_to_s3=True
         )
+        
+        # Calculate and log total execution time
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"\n=== Full Image Generation Complete ===")
+        print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Total Execution Time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
         
         return GenerateImageResponse(image_urls=structured_urls, pdf_url=pdf_url)
     

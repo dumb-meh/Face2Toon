@@ -6,6 +6,7 @@ import base64
 import boto3
 import asyncio
 import uuid
+import time
 from datetime import datetime
 from typing import List, Dict
 from PIL import Image, ImageDraw, ImageFont
@@ -45,8 +46,10 @@ class SwapCharacter:
         reference_images: List[UploadFile]
     ) -> SwapCharacterResponse:
         """Main method to swap character in existing book"""
+        start_time = time.time()
         try:
             print(f"\n=== Starting Character Swap ===")
+            print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"Character: {character_name}, Gender: {gender}, Age: {age}")
             print(f"Style: {image_style}")
             print(f"Received {len(full_page_urls)} existing images")
@@ -141,6 +144,13 @@ class SwapCharacter:
             
             # Convert to structured format
             structured_urls = self._convert_dict_to_structured(image_urls, full_image_urls)
+            
+            # Calculate and log total execution time
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"\n=== Character Swap Complete ===")
+            print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Total Execution Time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
             
             return SwapCharacterResponse(image_urls=structured_urls, pdf_url=pdf_url)
             
