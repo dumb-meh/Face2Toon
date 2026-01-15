@@ -45,6 +45,8 @@ class SwapCharacter:
         gender: str,
         age: int,
         image_style: str,
+        story_language: str,
+        language: str,
         reference_images: List[UploadFile]
     ) -> SwapCharacterResponse:
         """Main method to swap character in existing book"""
@@ -70,8 +72,10 @@ class SwapCharacter:
             
             # Update prompts and story with new character details using LLM
             print(f"\n=== Updating prompts and story for new character ===")
-            updated_prompts = await self._update_text_with_llm(prompts, character_name, gender, age, is_story=False)
-            updated_story = await self._update_text_with_llm(story, character_name, gender, age, is_story=True)
+            # For prompts: Update character details for image generation
+            updated_prompts = await self._update_prompts_for_images(prompts, character_name, gender, age, is_story=False)
+            # For story: Only change name and translate if needed
+            updated_story = await self._update_story_text(story, character_name, story_language, language)
             print(f"✓ Updated {len(updated_prompts)} prompts and {len(updated_story)} story entries")
             
             # Results dictionary
@@ -183,7 +187,7 @@ class SwapCharacter:
             traceback.print_exc()
             raise
     
-    async def _update_text_with_llm(
+    async def _update_prompts_for_images(
         self,
         text_dict: Dict[str, str],
         new_character_name: str,
@@ -191,7 +195,7 @@ class SwapCharacter:
         new_age: int,
         is_story: bool = False
     ) -> Dict[str, str]:
-        """Use LLM to update character names and pronouns in prompts/story"""
+        """Update prompts for image generation - change character details"""
         try:
             updated_dict = {}
             
@@ -200,35 +204,31 @@ class SwapCharacter:
                     updated_dict[key] = text
                     continue
                 
-                # Create LLM prompt
-                text_type = "story text" if is_story else "image generation prompt"
-                pronoun_guide = "he/him/his" if new_gender.lower() == "male" else "she/her/hers"
-                
-                llm_prompt = f"""You are updating a children's storybook {text_type}. Replace the old character's name and pronouns with new ones.
+                # For image prompts: update character description
+                llm_prompt = f"""You are updating a children's storybook image generation prompt. Replace the old character description with new character details.
 
 New character details:
 - Name: {new_character_name}
 - Gender: {new_gender}
 - Age: {new_age} years old
-- Pronouns: {pronoun_guide}
 
-Original {text_type}:
+Original prompt:
 {text}
 
 Instructions:
 1. Replace any character name with "{new_character_name}"
-2. Update all pronouns to match {pronoun_guide}
-3. Keep everything else exactly the same - same story, same scene, same actions
-4. Return ONLY the updated text, nothing else
+2. Update character description to match: {new_age}-year-old {new_gender} child
+3. Keep everything else exactly the same - same scene, same actions, same setting
+4. Return ONLY the updated prompt, nothing else
 
-Updated {text_type}:"""
+Updated prompt:"""
                 
                 # Call OpenAI
                 response = await asyncio.to_thread(
                     self.openai_client.chat.completions.create,
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that updates character names and pronouns in text while keeping everything else unchanged."},
+                        {"role": "system", "content": "You are a helpful assistant that updates character details in image generation prompts."},
                         {"role": "user", "content": llm_prompt}
                     ],
                     temperature=0.3
@@ -240,9 +240,97 @@ Updated {text_type}:"""
             return updated_dict
             
         except Exception as e:
-            print(f"Error updating text with LLM: {str(e)}")
+            print(f"Error updating prompts: {str(e)}")
             # Fallback: return original text if LLM fails
             return text_dict
+    
+    async def _update_story_text(
+        self,
+        story_dict: Dict[str, str],
+        new_character_name: str,
+        current_language: str,
+        target_language: str
+    ) -> Dict[str, str]:
+        """Update story text - replace names and translate if needed"""
+        try:
+            if not story_dict:
+                return {}
+            
+            updated_dict = {}
+            
+            print(f"[Story Update] Current language: {current_language}")
+            print(f"[Story Update] Target language: {target_language}")
+            
+            # Determine if translation is needed
+            needs_translation = current_language.lower().strip() != target_language.lower().strip()
+            
+            # Process each story entry
+            for key, text in story_dict.items():
+                if not text or not text.strip():
+                    updated_dict[key] = text
+                    continue
+                
+                if needs_translation:
+                    # Translate and update name
+                    llm_prompt = f"""You are translating a children's storybook text. Replace the character name and translate to {target_language}.
+
+New character name: {new_character_name}
+Target language: {target_language}
+
+Original text (in {current_language}):
+{text}
+
+Instructions:
+1. Replace any character name with "{new_character_name}"
+2. Translate the entire text to {target_language}
+3. Keep the story content, actions, and meaning exactly the same
+4. DO NOT change pronouns or gender references - keep them as they are in the original
+5. Return ONLY the translated text with updated name, nothing else
+
+Translated text:"""
+                else:
+                    # Only update name, no translation needed
+                    llm_prompt = f"""You are updating a children's storybook text. Replace the old character name with the new name.
+
+New character name: {new_character_name}
+
+Original text:
+{text}
+
+Instructions:
+1. Replace any character name with "{new_character_name}"
+2. Keep everything else EXACTLY the same - same language, same pronouns, same gender references, same wording
+3. DO NOT translate or change the language
+4. DO NOT change pronouns (he/she/they) or any gender references
+5. Return ONLY the text with updated name, nothing else
+
+Updated text:"""
+                
+                # Call OpenAI
+                response = await asyncio.to_thread(
+                    self.openai_client.chat.completions.create,
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that updates character names in stories while preserving all other details."},
+                        {"role": "user", "content": llm_prompt}
+                    ],
+                    temperature=0.3
+                )
+                
+                updated_text = response.choices[0].message.content.strip()
+                updated_dict[key] = updated_text
+            
+            if needs_translation:
+                print(f"[Story Update] ✓ Translated from {current_language} to {target_language} and updated names")
+            else:
+                print(f"[Story Update] ✓ Updated names (no translation needed)")
+            
+            return updated_dict
+            
+        except Exception as e:
+            print(f"Error updating story text: {str(e)}")
+            # Fallback: return original text if LLM fails
+            return story_dict
     
     async def _generate_cover_page(
         self,

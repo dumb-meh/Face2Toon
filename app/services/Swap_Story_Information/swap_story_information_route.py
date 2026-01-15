@@ -1,33 +1,21 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from typing import List
 import json
-from .swap_character import SwapCharacter
-from .swap_character_schema import SwapCharacterRequest, SwapCharacterResponse
+from .swap_story_information import SwapStoryInformation
+from .swap_story_information import SwapStoryInformationRequest, SwapStoryInformationResponse
 
 router = APIRouter()
-swap_character_service = SwapCharacter()
-
-@router.post("/swap_character", response_model=SwapCharacterResponse)
-async def swap_character_endpoint(
-    full_page_urls: str = Form(..., description="JSON string of list of 11 full-page URLs"),
-    prompts: str = Form(..., description="JSON string of prompts dictionary"),
-    story: str = Form(..., description="JSON string of story dictionary"),
-    character_name: str = Form(...),
-    gender: str = Form(...),
-    age: int = Form(...),
-    story_language: str = Form(..., description="Current language of the story"),
-    language: str = Form(..., description="Target language for the story"),
-    image_style: str = Form(...),
-    reference_images: List[UploadFile] = File(..., description="New character reference images")
-):
+swap_story_information_service = SwapStoryInformation()
+@router.post("/swap_story_information", response_model=SwapStoryInformationResponse)
+async def swap_story_information_endpoint(request: SwapStoryInformationRequest):
     try:
         # Debug: Print received data
-        print(f"\n=== Swap Character Endpoint Called ===")
-        print(f"full_page_urls type: {type(full_page_urls)}")
-        print(f"full_page_urls value: {full_page_urls[:200] if full_page_urls else 'None'}...")
-        print(f"prompts type: {type(prompts)}")
-        print(f"story type: {type(story)}")
-        print(f"reference_images count: {len(reference_images)}")
+        print(f"\n=== Swap Story Information Endpoint Called ===")
+        print(f"full_page_urls type: {type(request.full_page_urls)}")
+        print(f"full_page_urls value: {request.full_page_urls[:200] if request.full_page_urls else 'None'}...")
+        print(f"prompts type: {type(request.prompts)}")
+        print(f"story type: {type(request.story)}")
+        print(f"reference_images count: {len(request.reference_images)}")
         
         # Parse full_page_urls - handle both JSON array and comma-separated string
         try:
@@ -76,18 +64,7 @@ async def swap_character_endpoint(
         print(f"✓ Parsed {len(story_dict)} story entries")
         
         # Call swap service
-        response = await swap_character_service.swap_character(
-            full_page_urls=full_page_urls_list,
-            prompts=prompts_dict,
-            story=story_dict,
-            character_name=character_name,
-            gender=gender,
-            age=age,
-            image_style=image_style,
-            story_language=story_language,
-            language=language,
-            reference_images=reference_images
-        )
+        response = await swap_story_information_service.swap_story_information(request)
         return response
     except Exception as e:
         import traceback
