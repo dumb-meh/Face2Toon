@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict
+from typing import Optional, Dict,List
 
 class GenerateStoryRequest(BaseModel):
    gender: str
@@ -8,6 +8,7 @@ class GenerateStoryRequest(BaseModel):
    image_style: str
    language: str
    user_input: str
+   character_description: Optional[List[str]]
 
 class GenerateStoryResponse(BaseModel):
     story: Dict[str, str] = Field(

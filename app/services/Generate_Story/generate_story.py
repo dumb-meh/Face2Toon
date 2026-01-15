@@ -25,6 +25,7 @@ Child Information:
 - Image Style: {input_data['image_style']}
 - Language: {input_data['language']}
 - Story Theme/Input: {input_data['user_input']}
+-Character Description: {', '.join(input_data['character_description']) if input_data.get('character_description') else 'N/A'}
 
 Requirements:
 1. Create a story appropriate for a {input_data['age']}-year-old child
