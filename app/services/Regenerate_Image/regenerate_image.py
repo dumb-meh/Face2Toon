@@ -8,6 +8,10 @@ from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
+from PyPDF2 import PdfReader, PdfWriter
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas as pdf_canvas
+from reportlab.lib.utils import ImageReader
 from .regenerate_image_schema import ReGenerateImageRequest, ReGenerateImageResponse, PageImageUrls
 from app.utils.upload_to_bucket import upload_file_object_to_s3, delete_file_from_s3
 from app.utils.image_analysis import get_text_placement_recommendation
@@ -92,7 +96,20 @@ class ReGenerateImage:
                     page_image_urls = image_urls_future.result()
             
             print(f"Image regenerated successfully: {page_image_urls.fullPageUrl}")
-            return ReGenerateImageResponse(image_url=[page_image_urls])
+            
+            # Update the PDF with the regenerated page(s)
+            print(f"Updating PDF with regenerated page(s)...")
+            updated_pdf_url = self._update_pdf_with_new_pages(
+                request.pdf_url,
+                page_image_urls,
+                request.page_number,
+                is_cover
+            )
+            
+            return ReGenerateImageResponse(
+                image_url=[page_image_urls],
+                pdf_url=updated_pdf_url
+            )
             
         except Exception as e:
             print(f"Error in regenerate_image: {str(e)}")
@@ -497,6 +514,169 @@ class ReGenerateImage:
             
         except Exception as e:
             print(f"Error generating and splitting image: {str(e)}")
+            raise
+    
+    def _update_pdf_with_new_pages(
+        self,
+        pdf_url: str,
+        page_image_urls: PageImageUrls,
+        page_number: int,
+        is_cover: bool
+    ) -> str:
+        """Download PDF, replace regenerated page(s), and re-upload"""
+        try:
+            # Extract S3 key from PDF URL
+            pdf_s3_key = self._extract_s3_key_from_url(pdf_url)
+            print(f"Downloading PDF from S3: {pdf_s3_key}")
+            
+            # Download existing PDF from S3
+            pdf_bytes = self._download_image_from_s3(pdf_s3_key)
+            pdf_buffer = io.BytesIO(pdf_bytes)
+            
+            # Read the existing PDF
+            pdf_reader = PdfReader(pdf_buffer)
+            pdf_writer = PdfWriter()
+            
+            # Download the new regenerated image(s)
+            print(f"Downloading regenerated images for PDF update...")
+            
+            if is_cover:
+                # Cover page (page 0 in PDF)
+                new_img_response = requests.get(page_image_urls.fullPageUrl, timeout=60)
+                new_img_response.raise_for_status()
+                new_img = Image.open(io.BytesIO(new_img_response.content))
+                
+                # Convert to RGB if needed
+                if new_img.mode != 'RGB':
+                    new_img = new_img.convert('RGB')
+                
+                # Resize to 8.5" x 8.5" at 72 DPI for PDF
+                new_img = new_img.resize((612, 612), Image.Resampling.LANCZOS)
+                
+                # Create new PDF page with the image
+                new_page_buffer = io.BytesIO()
+                new_page_canvas = pdf_canvas.Canvas(new_page_buffer, pagesize=(612, 612))
+                
+                img_buffer = io.BytesIO()
+                new_img.save(img_buffer, format='PNG')
+                img_buffer.seek(0)
+                img_reader = ImageReader(img_buffer)
+                
+                new_page_canvas.drawImage(img_reader, 0, 0, width=612, height=612)
+                new_page_canvas.save()
+                new_page_buffer.seek(0)
+                
+                # Read the new page
+                new_page_pdf = PdfReader(new_page_buffer)
+                
+                # Copy all pages, replacing page 0
+                for i in range(len(pdf_reader.pages)):
+                    if i == 0:
+                        pdf_writer.add_page(new_page_pdf.pages[0])
+                    else:
+                        pdf_writer.add_page(pdf_reader.pages[i])
+                
+                print(f"Replaced cover page (page 0) in PDF")
+            
+            else:
+                # Regular page - download both left and right split images
+                left_img_response = requests.get(page_image_urls.leftUrl, timeout=60)
+                left_img_response.raise_for_status()
+                left_img = Image.open(io.BytesIO(left_img_response.content))
+                
+                right_img_response = requests.get(page_image_urls.rightUrl, timeout=60)
+                right_img_response.raise_for_status()
+                right_img = Image.open(io.BytesIO(right_img_response.content))
+                
+                # Convert to RGB if needed
+                if left_img.mode != 'RGB':
+                    left_img = left_img.convert('RGB')
+                if right_img.mode != 'RGB':
+                    right_img = right_img.convert('RGB')
+                
+                # Resize to 8.5" x 8.5" at 72 DPI for PDF
+                left_img = left_img.resize((612, 612), Image.Resampling.LANCZOS)
+                right_img = right_img.resize((612, 612), Image.Resampling.LANCZOS)
+                
+                # Calculate PDF page indices
+                # page_number is the image number (e.g., 1, 2, 3...)
+                # Left page = (page_number * 2) + 1
+                # Right page = (page_number * 2) + 2
+                # PDF index = page - 1 (because PDF is 0-indexed, but add 2 for logo pages)
+                left_page_num = (page_number * 2) + 1
+                right_page_num = (page_number * 2) + 2
+                left_pdf_index = left_page_num + 2 - 1  # +2 for logo pages, -1 for 0-index
+                right_pdf_index = right_page_num + 2 - 1
+                
+                print(f"Replacing PDF pages: {left_page_num} (index {left_pdf_index}) and {right_page_num} (index {right_pdf_index})")
+                
+                # Create new PDF pages with the images
+                left_page_buffer = io.BytesIO()
+                left_page_canvas = pdf_canvas.Canvas(left_page_buffer, pagesize=(612, 612))
+                left_img_buffer = io.BytesIO()
+                left_img.save(left_img_buffer, format='PNG')
+                left_img_buffer.seek(0)
+                left_img_reader = ImageReader(left_img_buffer)
+                left_page_canvas.drawImage(left_img_reader, 0, 0, width=612, height=612)
+                left_page_canvas.save()
+                left_page_buffer.seek(0)
+                
+                right_page_buffer = io.BytesIO()
+                right_page_canvas = pdf_canvas.Canvas(right_page_buffer, pagesize=(612, 612))
+                right_img_buffer = io.BytesIO()
+                right_img.save(right_img_buffer, format='PNG')
+                right_img_buffer.seek(0)
+                right_img_reader = ImageReader(right_img_buffer)
+                right_page_canvas.drawImage(right_img_reader, 0, 0, width=612, height=612)
+                right_page_canvas.save()
+                right_page_buffer.seek(0)
+                
+                # Read the new pages
+                left_new_page = PdfReader(left_page_buffer)
+                right_new_page = PdfReader(right_page_buffer)
+                
+                # Copy all pages, replacing the two pages
+                for i in range(len(pdf_reader.pages)):
+                    if i == left_pdf_index:
+                        pdf_writer.add_page(left_new_page.pages[0])
+                    elif i == right_pdf_index:
+                        pdf_writer.add_page(right_new_page.pages[0])
+                    else:
+                        pdf_writer.add_page(pdf_reader.pages[i])
+                
+                print(f"Replaced pages {left_page_num} and {right_page_num} in PDF")
+            
+            # Write updated PDF to buffer
+            updated_pdf_buffer = io.BytesIO()
+            pdf_writer.write(updated_pdf_buffer)
+            updated_pdf_buffer.seek(0)
+            
+            # Delete old PDF from S3
+            print(f"Deleting old PDF from S3: {pdf_s3_key}")
+            delete_result = delete_file_from_s3(bucket_name=self.bucket_name, object_name=pdf_s3_key)
+            if delete_result['success']:
+                print(f"Old PDF deleted successfully")
+            else:
+                print(f"Warning: Failed to delete old PDF: {delete_result['message']}")
+            
+            # Upload updated PDF to S3
+            print(f"Uploading updated PDF to S3: {pdf_s3_key}")
+            upload_result = upload_file_object_to_s3(
+                file_object=updated_pdf_buffer,
+                bucket_name=self.bucket_name,
+                object_name=pdf_s3_key
+            )
+            
+            if not upload_result['success']:
+                raise ValueError(f"Failed to upload updated PDF to S3: {upload_result['message']}")
+            
+            print(f"Updated PDF uploaded successfully: {upload_result['url']}")
+            return upload_result['url']
+            
+        except Exception as e:
+            print(f"Error updating PDF: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def _create_correction_prompt(self, prompt: str, story: str, gender: str, age: int, image_style: str) -> str:

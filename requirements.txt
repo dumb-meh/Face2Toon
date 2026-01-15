@@ -10,3 +10,4 @@ byteplus-sdk
 openai
 boto3
 reportlab
+PyPDF2

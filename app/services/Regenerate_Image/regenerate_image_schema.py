@@ -10,6 +10,7 @@ class ReGenerateImageRequest(BaseModel):
    image_style: str = Field(description="Desired illustration style")
    page_type:str = Field(description="Type of the page")
    page_number:int = Field(description="Page number to be regenerated")
+   pdf_url:str = Field(description="URL of the original PDF book")
 
 class PageImageUrls(BaseModel):
     fullPageUrl: str = Field(description="Full original generated image URL")
@@ -18,3 +19,4 @@ class PageImageUrls(BaseModel):
     
 class ReGenerateImageResponse(BaseModel):
     image_url:List[PageImageUrls] = Field(description="Regenerated image URL of the page with full and split versions")
+    pdf_url: str = Field(description="Updated PDF URL with the regenerated page(s)")
