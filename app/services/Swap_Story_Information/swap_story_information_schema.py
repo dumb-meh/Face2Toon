@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from fastapi import UploadFile,Query
 
 class PageImageUrls(BaseModel):
     name: str = Field(description="Page identifier (e.g., 'page 1')")
@@ -9,14 +8,12 @@ class PageImageUrls(BaseModel):
     rightUrl: Optional[str] = Field(default=None, description="Right half of split image URL")
       
 class SwapStoryInformationRequest(BaseModel):
-    full_page_urls: List[str] = Field(description="List of 11 full-page image URLs (pages 1-11)")
-    prompts: dict = Field(description="Dictionary of prompts for all pages (page 0 to page 13)")
+    full_page_urls: List[str] = Field(description="List of full-page image URLs")
     story: dict = Field(description="Dictionary of story text for each page")
     character_name: str = Field(description="New character's name")
-    age: int = Field(description="New character's age")
-    language: str = Field(description="Language for the story")
-    image_style: str = Field(description="Image style (e.g., 'watercolor', 'cartoon')")
-    change_type: Query = Field(description="Type of information to swap (e.g., 'name', 'age', 'language', 'style')")
+    language: str = Field(description="Target language for the story")
+    story_language: str = Field(description="Current language of the story")
+    change_type: str = Field(description="Type of information to swap: 'language', 'name', or 'both'")
 
 class SwapStoryInformationResponse(BaseModel):
     image_urls: List[PageImageUrls] = Field(description="Generated image URLs for each page with full and split versions")
