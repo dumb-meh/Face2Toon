@@ -35,13 +35,15 @@ class CreateCharacter:
         past_theme = ""
         
         if request.past_characters:
-            past_char = f"IMPORTANT: Do NOT generate any character similar to these: {', '.join(request.past_characters)}. Create a completely different character with different name, ethnicity, appearance, and personality.\n"
+            # Flatten list of lists into a single list of character descriptions
+            flattened_characters = [item for sublist in request.past_characters for item in sublist]
+            past_char = f"IMPORTANT: Do NOT generate any character similar to these: {', '.join(flattened_characters)}. Create a completely different character with different name, ethnicity, appearance, and personality.\n"
         
         if request.past_themes:
             past_theme = f"IMPORTANT: Do NOT use any theme similar to these: {', '.join(request.past_themes)}. Create a completely NEW and UNIQUE story theme.\n"
         
         prompt = f"""{past_char}{past_theme}
-Create a UNIQUE and DIVERSE child character for a children's book. Generate a completely different character each time.
+Create a UNIQUE and DIVERSE child character for a children's book. Generate a completely different character each time. Try to vary gender, age and ethnicity for maximum diversity.
 
 Respond only with a JSON object containing:
 
