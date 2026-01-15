@@ -6,6 +6,7 @@ from app.services.Generate_Images.generate_images_route import router as generat
 from app.services.Regenerate_Image.regenerate_image_route import router as regenerate_images_router
 from app.services.Create_Character.create_character_route import router as create_character_router
 from app.services.Swap_Character.swap_character_route import router as swap_character_router
+from app.services.Swap_Story_Information.swap_story_information_route import router as swap_story_information_router
 from app.utils import image_analysis as image_analysis_module
 import os
 import asyncio
@@ -51,7 +52,7 @@ app.include_router(regenerate_images_router, prefix="/api/v1")
 app.include_router(image_analysis_module.router, prefix="/api/v1")
 app.include_router(create_character_router, prefix="/api/v1")
 app.include_router(swap_character_router, prefix="/api/v1")
-
+app.include_router(swap_story_information_router, prefix="/api/v1")
 cleanup_task = None
 
 async def cleanup_old_files():

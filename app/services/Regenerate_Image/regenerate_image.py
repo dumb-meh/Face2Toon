@@ -600,15 +600,14 @@ class ReGenerateImage:
                 
                 # Calculate PDF page indices
                 # page_number is the image number (e.g., 1, 2, 3...)
-                # Left page = (page_number * 2) + 1
-                # Right page = (page_number * 2) + 2
-                # PDF index = page - 1 (because PDF is 0-indexed, but add 2 for logo pages)
-                left_page_num = (page_number * 2) + 1
-                right_page_num = (page_number * 2) + 2
-                left_pdf_index = left_page_num + 2 - 1  # +2 for logo pages, -1 for 0-index
-                right_pdf_index = right_page_num + 2 - 1
+                # PDF structure: index 0 = cover, indices 1-2 = logo pages, indices 3+ = story pages
+                # For page_number=1: should replace PDF indices 3 and 4
+                # For page_number=2: should replace PDF indices 5 and 6
+                # Formula: left_pdf_index = page_number * 2 + 1, right_pdf_index = page_number * 2 + 2
+                left_pdf_index = page_number * 2 + 1
+                right_pdf_index = page_number * 2 + 2
                 
-                print(f"Replacing PDF pages: {left_page_num} (index {left_pdf_index}) and {right_page_num} (index {right_pdf_index})")
+                print(f"Replacing PDF indices: {left_pdf_index} and {right_pdf_index}")
                 
                 # Create new PDF pages with the images
                 left_page_buffer = io.BytesIO()
@@ -644,7 +643,7 @@ class ReGenerateImage:
                     else:
                         pdf_writer.add_page(pdf_reader.pages[i])
                 
-                print(f"Replaced pages {left_page_num} and {right_page_num} in PDF")
+                print(f"Replaced PDF indices {left_pdf_index} and {right_pdf_index} successfully")
             
             # Write updated PDF to buffer
             updated_pdf_buffer = io.BytesIO()
