@@ -59,7 +59,7 @@ Respond only with a JSON object containing:
   * "Create an adventure about solving a mystery in the neighborhood"
   BE CREATIVE with different scenarios each time!
 
-- 'story_theme': A short 3-5 word theme/category (examples: "space adventure", "overcoming fears", "making friends", "magical discovery", "neighborhood mystery", "helping animals", "learning cultures", "family bonds", "nature exploration")
+- 'story_theme': A short 3-5 word theme/category (examples: "space adventure", "overcoming fears", "making friends", "magical discovery", "neighborhood mystery", "helping animals", "learning cultures", "family bonds", "nature exploration"). Only one theme.
 
 - 'character': a list of 5-7 strings describing BOTH physical attributes AND personality traits along with Children name,age and gender(e.g., ["name:Zuri","gender: girl","age:7","African American", "Brown eyes", "Curly black hair with two puffs", "Bright smile with dimples", "Wearing yellow sundress", "Curious and brave personality", "Loves asking questions about nature"])
 
