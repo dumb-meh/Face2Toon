@@ -6,6 +6,7 @@ class GenerateImageRequest(BaseModel):
    page_connections: Optional[Dict[str, str]] = Field(default=None, description="Visual connections between pages")
    gender: str = Field(description="Child's gender")
    age: int = Field(description="Child's age")
+   language: str = Field(description="Story language")
    image_style: str = Field(description="Desired illustration style")
 
 class PageImageUrls(BaseModel):

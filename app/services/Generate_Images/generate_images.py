@@ -44,7 +44,8 @@ class GenerateImages:
         dpi: int,
         session_id: str,
         upload_to_s3: bool,
-        book_uuid: str
+        book_uuid: str,
+        language: str = "English"
     ):
         """Worker that processes text insertion queue"""
         while True:
@@ -196,17 +197,25 @@ class GenerateImages:
                         # Draw on the copy
                         draw = ImageDraw.Draw(img_with_text)
                         
-                        # Load font
+                        # Load font based on language
                         from pathlib import Path
-                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                        if language and language.lower() == "arabic":
+                            font_path = Path(__file__).resolve().parents[3] / "fonts" / "Playpen_Sans_Arabic" / "PlaypenSansArabic-Regular.ttf"
+                            font_name = "Playpen Sans Arabic"
+                        else:
+                            font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                            font_name = "Comic Relief"
+                        
                         try:
                             if font_path.exists():
                                 font = ImageFont.truetype(str(font_path), font_size)
-                                print(f"[Text Worker] ✓ Loaded Comic Relief font at size {font_size}")
+                                print(f"[Text Worker] ✓ Loaded {font_name} font at size {font_size}")
                             else:
                                 font = ImageFont.load_default()
+                                print(f"[Text Worker] ✗ Font not found at {font_path}, using default")
                         except Exception as font_err:
                             font = ImageFont.load_default()
+                            print(f"[Text Worker] ✗ Font load error: {font_err}, using default")
                         
                         # Draw text with outline
                         outline_color = "black" if text_color.lower() == "white" else "white"
@@ -388,6 +397,7 @@ class GenerateImages:
         gender: str,
         age: int,
         image_style: str,
+        language: str = "English",
         coverpage: str = "no",
         sequential: str = "no",
         story: Optional[Dict[str, str]] = None,
@@ -440,7 +450,8 @@ class GenerateImages:
             book_uuid=book_uuid,
             font_size=100,  # Updated font size
             text_color="white",  # Default color
-            dpi=300
+            dpi=300,
+            language=language
         )
         
         # Convert dict to structured format
@@ -481,7 +492,8 @@ class GenerateImages:
         book_uuid: str = None,
         font_size: int = 100,
         text_color: str = "white",
-        dpi: int = 300
+        dpi: int = 300,
+        language: str= "English"
     ) -> tuple[Dict[str, str], Dict[str, str], Dict[str, bytes]]:
         """Generate images for specified pages using SeeDream API with async queue-based text insertion
         Returns: (image_urls, full_image_urls, image_bytes)"""
@@ -509,7 +521,8 @@ class GenerateImages:
                     dpi,
                     session_id,
                     upload_to_s3,
-                    book_uuid
+                    book_uuid,
+                    language
                 )
             )
             worker_tasks.append(task)

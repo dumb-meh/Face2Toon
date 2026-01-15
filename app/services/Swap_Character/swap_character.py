@@ -117,7 +117,8 @@ class SwapCharacter:
                     image_style=image_style,
                     reference_images_bytes=reference_images_bytes_list,
                     book_uuid=book_uuid,
-                    page_number=page_num - 1  # For splitting: page 1 -> pages 1-2 (page_number=0)
+                    page_number=page_num - 1,  # For splitting: page 1 -> pages 1-2 (page_number=0)
+                    language=language
                 )
                 tasks.append(task)
             
@@ -416,6 +417,7 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
         reference_images_bytes: List[bytes],
         book_uuid: str,
         page_number: int,
+        language: str,
         font_size: int = 100,
         text_color: str = "white",
         dpi: int = 300
@@ -458,9 +460,13 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
                     
                     draw = ImageDraw.Draw(img)
                     
-                    # Load font
+                    # Load font based on language
                     from pathlib import Path
-                    font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    if language and language.lower() == "arabic":
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Playpen_Sans_Arabic" / "PlaypenSansArabic-Regular.ttf"
+                    else:
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    
                     try:
                         if font_path.exists():
                             font = ImageFont.truetype(str(font_path), font_size)

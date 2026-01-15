@@ -80,7 +80,8 @@ class SwapStoryInformation:
                         page_key=page_key,
                         page_url=page_url,
                         story_text=story_text,
-                        book_uuid=book_uuid
+                        book_uuid=book_uuid,
+                        language=request.language
                     )
                 else:
                     # Double page - needs splitting
@@ -89,7 +90,8 @@ class SwapStoryInformation:
                         page_url=page_url,
                         story_text=story_text,
                         book_uuid=book_uuid,
-                        page_number=idx - 1  # For splitting calculation
+                        page_number=idx - 1,  # For splitting calculation
+                        language=request.language
                     )
                 
                 tasks.append(task)
@@ -249,6 +251,7 @@ Translated text with updated name:"""
         page_url: str,
         story_text: str,
         book_uuid: str,
+        language: str = "English",
         font_size: int = 100,
         text_color: str = "white",
         dpi: int = 300
@@ -275,9 +278,13 @@ Translated text with updated name:"""
                     
                     draw = ImageDraw.Draw(img)
                     
-                    # Load font
+                    # Load font based on language
                     from pathlib import Path
-                    font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    if language and language.lower() == "arabic":
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Playpen_Sans_Arabic" / "PlaypenSansArabic-Regular.ttf"
+                    else:
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    
                     try:
                         if font_path.exists():
                             font = ImageFont.truetype(str(font_path), font_size)
@@ -345,6 +352,7 @@ Translated text with updated name:"""
         story_text: str,
         book_uuid: str,
         page_number: int,
+        language: str = "English",
         font_size: int = 100,
         text_color: str = "white",
         dpi: int = 300
@@ -371,9 +379,13 @@ Translated text with updated name:"""
                     
                     draw = ImageDraw.Draw(img)
                     
-                    # Load font
+                    # Load font based on language
                     from pathlib import Path
-                    font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    if language and language.lower() == "arabic":
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Playpen_Sans_Arabic" / "PlaypenSansArabic-Regular.ttf"
+                    else:
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    
                     try:
                         if font_path.exists():
                             font = ImageFont.truetype(str(font_path), font_size)
