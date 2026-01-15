@@ -59,7 +59,7 @@ Respond only with a JSON object containing:
 
 - 'story_theme': A short 3-5 word theme/category (examples: "space adventure", "overcoming fears", "making friends", "magical discovery", "neighborhood mystery", "helping animals", "learning cultures", "family bonds", "nature exploration")
 
-- 'character': a list of 5-7 strings describing BOTH physical attributes AND personality traits (e.g., ["African American", "Brown eyes", "Curly black hair with two puffs", "Bright smile with dimples", "Wearing yellow sundress", "Curious and brave personality", "Loves asking questions about nature"])
+- 'character': a list of 5-7 strings describing BOTH physical attributes AND personality traits along with Children name,age and gender(e.g., ["name:Zuri","gender: girl","age:7","African American", "Brown eyes", "Curly black hair with two puffs", "Bright smile with dimples", "Wearing yellow sundress", "Curious and brave personality", "Loves asking questions about nature"])
 
 CRITICAL REQUIREMENTS:
 1. Ensure MAXIMUM diversity in ethnicity: African, East Asian, South Asian, Hispanic/Latino, Middle Eastern, European, Pacific Islander, Native American, Mixed heritage, etc.
@@ -74,7 +74,7 @@ Return the response in this exact JSON format:
     "gender": "boy or girl",
     "story_prompt": "Detailed story prompt like a user would write - what story they want created",
     "story_theme": "short theme category",
-    "character": ["race/ethnicity", "eye color", "hair description", "distinguishing features", "clothing style", "personality trait 1", "personality trait 2"]
+    "character": ["name:child's name","gender: boy or girl","age:age_number","race/ethnicity", "eye color", "hair description", "distinguishing features", "clothing style", "personality trait 1", "personality trait 2"]
 }}
 """
         return prompt
