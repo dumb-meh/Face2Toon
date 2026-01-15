@@ -9,7 +9,7 @@ generate_images_service = GenerateImages()
 
 @router.post("/generate_images_first", response_model=GenerateImageResponse)
 async def generate_first_two_page(
-    reference_image_1: UploadFile = File(..., description="First reference image of the child"),
+    reference_image_1: Optional[UploadFile] = File(None, description="First reference image of the child"),
     reference_image_2: Optional[UploadFile] = File(None, description="Second reference image of the child"),
     reference_image_3: Optional[UploadFile] = File(None, description="Third reference image of the child"),
     story:str = Form(..., description="JSON string of story content for each page"),

@@ -139,44 +139,108 @@ class GenerateImages:
                     if is_single_page:
                         print(f"[Text Worker] {page_key} is single page (cover/coloring), skipping text insertion")
                 
-                # Now split and save the image (image_bytes now has text if it was added)
-                print(f"[Text Worker] Processing final image for {page_key} (text_was_added={text_was_added})")
-                img = Image.open(io.BytesIO(image_bytes))
-                print(f"[Text Worker] Opened final image: {img.size[0]}x{img.size[1]} pixels")
+                # Now process the image
+                print(f"[Text Worker] Processing {page_key} (text_was_added=will be determined)")
+                
+                # First, save the original image WITHOUT text as the full image
+                img_original = Image.open(io.BytesIO(image_bytes))
+                print(f"[Text Worker] Opened original image: {img_original.size[0]}x{img_original.size[1]} pixels")
                 
                 page_num_str = page_key.replace('page ', '').replace(' ', '_')
                 
-                # Save full image bytes
-                full_image_bytes = io.BytesIO()
-                img.save(full_image_bytes, format='PNG', dpi=(dpi, dpi))
-                full_image_bytes.seek(0)
-                full_image_bytes_data = full_image_bytes.read()
-                full_image_bytes.seek(0)
+                # Save full image bytes WITHOUT text
+                full_image_bytes_no_text = io.BytesIO()
+                img_original.save(full_image_bytes_no_text, format='PNG', dpi=(dpi, dpi))
+                full_image_bytes_no_text.seek(0)
+                full_image_bytes_no_text_data = full_image_bytes_no_text.read()
+                full_image_bytes_no_text.seek(0)
                 
-                # Upload/save full image (with text if applicable)
+                # Upload/save full image WITHOUT text (for future reuse in swap_story_information)
                 if upload_to_s3:
                     full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
-                    upload_result = upload_file_object_to_s3(full_image_bytes, object_name=full_object_name)
+                    upload_result = upload_file_object_to_s3(full_image_bytes_no_text, object_name=full_object_name)
                     if upload_result['success']:
                         full_image_url = upload_result['url']
-                        print(f"[Text Worker] Uploaded full image with text to S3: {full_image_url}")
+                        print(f"[Text Worker] Uploaded full image WITHOUT text to S3: {full_image_url}")
                     else:
                         full_image_url = None
                         print(f"[Text Worker] Failed to upload full image to S3")
                 else:
                     os.makedirs('uploads/generated_images', exist_ok=True)
                     full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
-                    img.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
+                    img_original.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
                     base_url = os.getenv('domain') or os.getenv('BASE_URL')
                     base_url = base_url.rstrip('/')
                     full_image_url = f"{base_url}/{full_image_filename}"
-                    print(f"[Text Worker] Saved full image with text locally: {full_image_url}")
+                    print(f"[Text Worker] Saved full image WITHOUT text locally: {full_image_url}")
                 
-                # Split if not single page
+                # Now work with a copy of the image to add text (if needed)
+                img_with_text = img_original.copy()
+                
+                # Add text if needed
+                text_was_added = False
+                if story_text and not is_single_page:
+                    # Use image analysis to add text
+                    try:
+                        print(f"[Text Worker] Adding text to {page_key}...")
+                        
+                        # Get text placement recommendation
+                        text_recommendation = await get_text_placement_recommendation(
+                            image_bytes, 
+                            story_text, 
+                            font_size
+                        )
+                        
+                        print(f"[Text Worker] Got recommendation: {text_recommendation.number_of_lines} lines on {text_recommendation.side} side")
+                        
+                        # Draw on the copy
+                        draw = ImageDraw.Draw(img_with_text)
+                        
+                        # Load font
+                        from pathlib import Path
+                        font_path = Path(__file__).resolve().parents[3] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                        try:
+                            if font_path.exists():
+                                font = ImageFont.truetype(str(font_path), font_size)
+                                print(f"[Text Worker] ✓ Loaded Comic Relief font at size {font_size}")
+                            else:
+                                font = ImageFont.load_default()
+                        except Exception as font_err:
+                            font = ImageFont.load_default()
+                        
+                        # Draw text with outline
+                        outline_color = "black" if text_color.lower() == "white" else "white"
+                        
+                        for line_coord in text_recommendation.line_coordinates:
+                            x, y = line_coord.x, line_coord.y
+                            line_text = line_coord.text
+                            
+                            # Draw outline
+                            for adj_x in [-2, 0, 2]:
+                                for adj_y in [-2, 0, 2]:
+                                    draw.text((x + adj_x, y + adj_y), line_text, font=font, fill=outline_color)
+                            # Draw main text
+                            draw.text((x, y), line_text, font=font, fill=text_color)
+                        
+                        text_was_added = True
+                        print(f"[Text Worker] ✓ Successfully added {len(text_recommendation.line_coordinates)} lines of text to {page_key}")
+                        
+                    except Exception as e:
+                        print(f"[Text Worker] ✗ Error adding text to {page_key}: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        text_was_added = False
+                else:
+                    if not story_text:
+                        print(f"[Text Worker] No story text for {page_key}, skipping text insertion")
+                    if is_single_page:
+                        print(f"[Text Worker] {page_key} is single page (cover/coloring), skipping text insertion")
+                
+                # Split if not single page - use the image WITH text for left/right pages
                 if not is_single_page:
-                    middle_x = img.width // 2
-                    left_half = img.crop((0, 0, middle_x, img.height))
-                    right_half = img.crop((middle_x, 0, img.width, img.height))
+                    middle_x = img_with_text.width // 2
+                    left_half = img_with_text.crop((0, 0, middle_x, img_with_text.height))
+                    right_half = img_with_text.crop((middle_x, 0, img_with_text.width, img_with_text.height))
                     
                     left_page_num = (page_number * 2) + 1
                     right_page_num = (page_number * 2) + 2
@@ -207,9 +271,10 @@ class GenerateImages:
                             results_dict['full_image_urls'][page_key] = full_image_url
                             results_dict['image_bytes'][f'page {left_page_num}'] = left_bytes
                             results_dict['image_bytes'][f'page {right_page_num}'] = right_bytes
-                            print(f"[Text Worker] ✓ Completed {page_key} -> pages {left_page_num}, {right_page_num} (with text)")
-                            print(f"[Text Worker]   Left: {left_result['url']}")
-                            print(f"[Text Worker]   Right: {right_result['url']}")
+                            print(f"[Text Worker] ✓ Completed {page_key} -> pages {left_page_num}, {right_page_num}")
+                            print(f"[Text Worker]   Full (no text): {full_image_url}")
+                            print(f"[Text Worker]   Left (with text): {left_result['url']}")
+                            print(f"[Text Worker]   Right (with text): {right_result['url']}")
                     else:
                         # Save locally
                         os.makedirs('uploads/generated_images/splitted', exist_ok=True)
@@ -235,11 +300,12 @@ class GenerateImages:
                         results_dict['full_image_urls'][page_key] = full_image_url
                         results_dict['image_bytes'][f'page {left_page_num}'] = left_bytes
                         results_dict['image_bytes'][f'page {right_page_num}'] = right_bytes
-                        print(f"[Text Worker] ✓ Completed {page_key} -> pages {left_page_num}, {right_page_num} (with text)")
-                        print(f"[Text Worker]   Left: {left_filename}")
-                        print(f"[Text Worker]   Right: {right_filename}")
+                        print(f"[Text Worker] ✓ Completed {page_key} -> pages {left_page_num}, {right_page_num}")
+                        print(f"[Text Worker]   Full (no text): {full_image_url}")
+                        print(f"[Text Worker]   Left (with text): {left_filename}")
+                        print(f"[Text Worker]   Right (with text): {right_filename}")
                 else:
-                    # Single page (cover or coloring)
+                    # Single page (cover or coloring) - use original without text
                     page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
                     if page_num == 12:
                         return_key = 'page 23'
@@ -249,8 +315,8 @@ class GenerateImages:
                         return_key = page_key
                     
                     results_dict['image_urls'][return_key] = full_image_url
-                    results_dict['full_image_urls'][page_key] = full_image_url  # Also store in full_image_urls for consistency
-                    results_dict['image_bytes'][return_key] = full_image_bytes_data
+                    results_dict['full_image_urls'][page_key] = full_image_url
+                    results_dict['image_bytes'][return_key] = full_image_bytes_no_text_data
                     print(f"[Text Worker] ✓ Completed single page {page_key} as {return_key}")
                     print(f"[Text Worker]   URL: {full_image_url}")
                 
