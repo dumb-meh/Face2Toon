@@ -216,18 +216,24 @@ async def add_text_with_face_avoidance(
         print(f"Warning: Error loading font: {e}, using default font")
         font = ImageFont.load_default()
     
-    # Draw each line of text at the recommended coordinates
-    outline_color = "black" if color.lower() == "white" else "white"
-    
+    # Draw each line of text with purple background per character and white text
     for line_coord in recommendation.line_coordinates:
         x, y = line_coord.x, line_coord.y
         line_text = line_coord.text
         
-        # Draw text with outline for better visibility
-        for adj_x in [-2, 0, 2]:
-            for adj_y in [-2, 0, 2]:
-                draw.text((x + adj_x, y + adj_y), line_text, font=font, fill=outline_color)
-        draw.text((x, y), line_text, font=font, fill=color)
+        current_x = x
+        for char in line_text:
+            # Get bounding box for this character
+            char_bbox = draw.textbbox((current_x, y), char, font=font)
+            
+            # Draw purple background rectangle for this character
+            draw.rectangle(char_bbox, fill=(150, 100, 200))
+            
+            # Draw white character on top
+            draw.text((current_x, y), char, font=font, fill=(255, 255, 255))
+            
+            # Move to next character position
+            current_x += char_bbox[2] - char_bbox[0]
     
     # Save result
     output = io.BytesIO()
