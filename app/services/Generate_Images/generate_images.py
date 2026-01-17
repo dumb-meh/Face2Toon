@@ -897,11 +897,12 @@ Children's storybook illustration in {image_style} style.
 Main character: {age}-year-old {gender} child continuing from the previous page.
 {prompt}
 Composition suitable for a children's storybook with space for text placement on the left side.
+CRITICAL COMPOSITION: This image will be split vertically down the middle into two pages. DO NOT place the character's face or any important facial features in the center of the image. Position the character primarily on the LEFT side or RIGHT side of the composition, never centered. Keep the character's face at least 25% away from the center vertical line to avoid splitting facial features. Background elements can span across, but the character should be clearly positioned to one side.
 Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
 CRITICAL: Maintain EXACT character appearance from the style reference - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. If clothing colors or patterns are specified in the prompt, follow them precisely without variation.
 Focus on: implementing the exact scene, actions, setting, and clothing details as described while preserving all character appearance characteristics.
 ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS ANYWHERE IN THE IMAGE. The image must be purely visual with no typography of any kind.
-Negative prompt: No text, no letters, no words, no signs, no labels, no captions, no written language, no typography, no alphabet characters, no numbers in text form. No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance.
+Negative prompt: No text, no letters, no words, no signs, no labels, no captions, no written language, no typography, no alphabet characters, no numbers in text form. No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance. Do not center the character's face in the middle of the image.
 """.strip()
             
             # Prepare headers
