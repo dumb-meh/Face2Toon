@@ -16,7 +16,7 @@ class GenerateStory:
         return response
 
     def create_prompt(self, input_data: dict) -> str:
-        return f"""You are a children's book author and illustrator assistant. Create a complete children's book with 1 cover page, 11 story pages, and 2 coloring pages.
+        return f"""You are a children's book author and illustrator assistant. Create a complete children's book with 1 cover page, 11 story pages, 2 coloring pages, and 1 back cover.
 
 Child Information:
 - Name: {input_data['name']}
@@ -36,16 +36,18 @@ Requirements:
 6. Make it engaging, educational, and age-appropriate
 7. Write the story text in {input_data['language']}
 8. Pages 12-13 will be coloring pages (black and white illustrations) based on memorable scenes from the story
+9. "page last page" will be the back cover (visual illustration only, no text will be added)
 
 Output Format:
 Return a JSON object with three fields:
 
-1. "story": A dictionary with keys "page 0" through "page 13"
+1. "story": A dictionary with keys "page 0" through "page 13" and "page last page"
    - "page 0": Only the book title (short and catchy) in {input_data['language']}
    - "page 1" to "page 11": Story text for each page in {input_data['language']}
    - "page 12" to "page 13": Text saying "Color this page!" or "Coloring page" in {input_data['language']}
+   - "page last page": Empty string "" (back cover has no text overlay)
 
-2. "prompt": A dictionary with keys "page 0" through "page 13"
+2. "prompt": A dictionary with keys "page 0" through "page 13" and "page last page"
    - Each value is a HIGHLY DETAILED image generation prompt for that page
    - CRITICAL: ALL prompts must be written in ENGLISH (regardless of story language)
    - CRITICAL: A reference image of the child will be provided to the image generator
@@ -55,6 +57,7 @@ Return a JSON object with three fields:
    - For "page 0" (cover): Start with "The child from the reference image..." and describe a compelling cover scene with the story title
    - For story pages (1-11): Start with "The main character {input_data['name']}..." or "The child..." (do NOT say 'from reference image')
    - For coloring pages (12-13): MUST include "black and white coloring page" at the beginning, then describe a memorable scene from the story with clear outlines and simple details suitable for children to color
+   - For "page last page" (back cover): Start with "Back cover illustration showing the child from the reference image..." and describe a beautiful closing scene that wraps up the story's theme or shows the character in a peaceful/happy ending moment
    - Be very specific about EVERY element in the scene
    - Do NOT describe facial features, skin tone, eye color, hair color/style - these are maintained from previous images
    - DO describe: exact clothing details (colors, patterns, type), specific pose, precise actions, setting details
@@ -78,6 +81,7 @@ Return a JSON object with three fields:
    Page 0: "The child from the reference image wearing a red t-shirt with blue jeans, standing in a magical forest. [rest of detailed description]"
    Page 1-11: "The child {input_data['name']} wearing a red t-shirt with blue jeans, standing in a sunny park with green grass and tall oak trees in the background. The child is holding a bright yellow kite with a long blue tail, smiling while looking up at the sky. Behind them, there's a wooden bench and a small pond with ducks. Warm afternoon sunlight creates soft shadows on the ground. The scene has a joyful, carefree mood with vibrant colors. Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
    Page 12-13: "Black and white coloring page illustration showing the child {input_data['name']} holding a kite in a park. Clear, bold outlines with simple details. The child is in a standing pose with the kite string in hand, surrounded by simple tree outlines and cloud shapes. Line art style, coloring book page, simple shapes, child-friendly. Simple line drawing, no colors, no shading, no gradients, suitable for children to color. Maintain character appearance."
+   Page 14: "Back cover illustration showing the child from the reference image wearing a red t-shirt and blue jeans, sitting peacefully under a large oak tree at sunset. The child is reading a book with a content smile, surrounded by colorful autumn leaves. Golden hour lighting creates a warm, nostalgic atmosphere. In the background, the magical forest from the story fades into soft focus. Birds fly across the orange and pink sunset sky. The scene conveys a sense of completion, peace, and the joy of storytelling. Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
 
 3. "page_connections": A dictionary mapping pages that should maintain visual consistency
    - STRICT CRITERIA: Only create connections when BOTH conditions are met:
@@ -94,12 +98,14 @@ Example output structure:
   "story": {{
     "page 0": "The Adventures of [Name]",
     "page 1": "Once upon a time...",
-    "page 2": "And then..."
+    "page 2": "And then...",
+    "page 14": ""
   }},
   "prompt": {{
     "page 0": "Book cover illustration showing the child from the reference image wearing...[detailed 4-6 sentence prompt]",
     "page 1": "The child {input_data['name']} wearing a blue striped shirt and khaki shorts...[detailed 4-6 sentence prompt with negative prompting]",
-    "page 2": "The main character {input_data['name']} now in different clothing, a green sweater...[detailed prompt]"
+    "page 2": "The main character {input_data['name']} now in different clothing, a green sweater...[detailed prompt]",
+    "page 14": "Back cover illustration showing the child from the reference image...[detailed 4-6 sentence prompt]"
   }},
   "page_connections": {{
     "page 3": "page 2"

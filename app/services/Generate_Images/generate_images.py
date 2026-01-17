@@ -156,24 +156,50 @@ class GenerateImages:
                 full_image_bytes_no_text_data = full_image_bytes_no_text.read()
                 full_image_bytes_no_text.seek(0)
                 
-                # Upload/save full image WITHOUT text (for future reuse in swap_story_information)
-                if upload_to_s3:
-                    full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
-                    upload_result = upload_file_object_to_s3(full_image_bytes_no_text, object_name=full_object_name)
-                    if upload_result['success']:
-                        full_image_url = upload_result['url']
-                        print(f"[Text Worker] Uploaded full image WITHOUT text to S3: {full_image_url}")
+                # Determine page number for special pages
+                page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else None
+                
+                # For coloring pages (12, 13), upload to splitted/ with page_23/page_24 naming
+                # For other single pages, upload to full/
+                if page_num == 12 or page_num == 13:
+                    # Coloring pages go to splitted folder
+                    final_page_num = 23 if page_num == 12 else 24
+                    if upload_to_s3:
+                        full_object_name = f"facetoon/{book_uuid}/splitted/page_{final_page_num}.png"
+                        upload_result = upload_file_object_to_s3(full_image_bytes_no_text, object_name=full_object_name)
+                        if upload_result['success']:
+                            full_image_url = upload_result['url']
+                            print(f"[Text Worker] Uploaded coloring page to S3 as page_{final_page_num}: {full_image_url}")
+                        else:
+                            full_image_url = None
+                            print(f"[Text Worker] Failed to upload coloring page to S3")
                     else:
-                        full_image_url = None
-                        print(f"[Text Worker] Failed to upload full image to S3")
+                        os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                        full_image_filename = f"uploads/generated_images/splitted/{session_id}_page_{final_page_num}.png"
+                        img_original.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
+                        base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                        base_url = base_url.rstrip('/')
+                        full_image_url = f"{base_url}/{full_image_filename}"
+                        print(f"[Text Worker] Saved coloring page locally as page_{final_page_num}: {full_image_url}")
                 else:
-                    os.makedirs('uploads/generated_images', exist_ok=True)
-                    full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
-                    img_original.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
-                    base_url = os.getenv('domain') or os.getenv('BASE_URL')
-                    base_url = base_url.rstrip('/')
-                    full_image_url = f"{base_url}/{full_image_filename}"
-                    print(f"[Text Worker] Saved full image WITHOUT text locally: {full_image_url}")
+                    # Upload/save full image WITHOUT text (for future reuse in swap_story_information)
+                    if upload_to_s3:
+                        full_object_name = f"facetoon/{book_uuid}/full/image_{page_num_str}.png"
+                        upload_result = upload_file_object_to_s3(full_image_bytes_no_text, object_name=full_object_name)
+                        if upload_result['success']:
+                            full_image_url = upload_result['url']
+                            print(f"[Text Worker] Uploaded full image WITHOUT text to S3: {full_image_url}")
+                        else:
+                            full_image_url = None
+                            print(f"[Text Worker] Failed to upload full image to S3")
+                    else:
+                        os.makedirs('uploads/generated_images', exist_ok=True)
+                        full_image_filename = f"uploads/generated_images/{session_id}_image_{page_num_str}.png"
+                        img_original.save(full_image_filename, format='PNG', dpi=(dpi, dpi))
+                        base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                        base_url = base_url.rstrip('/')
+                        full_image_url = f"{base_url}/{full_image_filename}"
+                        print(f"[Text Worker] Saved full image WITHOUT text locally: {full_image_url}")
                 
                 # Now work with a copy of the image to add text (if needed)
                 img_with_text = img_original.copy()
@@ -314,12 +340,14 @@ class GenerateImages:
                         print(f"[Text Worker]   Left (with text): {left_filename}")
                         print(f"[Text Worker]   Right (with text): {right_filename}")
                 else:
-                    # Single page (cover or coloring) - use original without text
-                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                    # Single page (cover, coloring pages, or back cover) - use original without text
+                    page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else None
                     if page_num == 12:
                         return_key = 'page 23'
                     elif page_num == 13:
                         return_key = 'page 24'
+                    elif page_key == 'page last page':
+                        return_key = 'page 25'
                     else:
                         return_key = page_key
                     
@@ -912,12 +940,12 @@ Negative prompt: No text, no letters, no words, no signs, no labels, no captions
             }
             
             # Prepare payload with appropriate dimensions
-            # Pages 0, 12, 13: 8.5"x8.5" at 300 DPI = 2550x2550 pixels
+            # Pages 0, 12, 13, 14: 8.5"x8.5" at 300 DPI = 2550x2550 pixels
             # Other pages: 16:9 aspect ratio (5120x2880) to later resize to 5100x2550 (17"x8.5" at 300 DPI)
             # Note: Cannot use 'size' and 'width'/'height' together per SeeDream docs
             page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            if page_key == 'page 0' or page_num == 12 or page_num == 13:
-                # Square format for cover and coloring pages
+            if page_key == 'page 0' or page_num == 12 or page_num == 13 or page_key == 'page last page':
+                # Square format for cover, coloring pages, and back cover
                 width = 2550
                 height = 2550
             else:
@@ -991,7 +1019,7 @@ Negative prompt: No text, no letters, no words, no signs, no labels, no captions
     
     def _resize_image_to_print_size(self, image_url: str, page_key: str, session_id: str) -> tuple[bytes, bool]:
         """Download image and resize to exact physical dimensions
-        Pages 0, 12, 13: 8.5" x 8.5" at 300 DPI (cover and coloring pages)
+        Pages 0, 12, 13, 'page last page': 8.5" x 8.5" at 300 DPI (cover, coloring pages, and back cover)
         Other pages: 17" width x 8.5" height at 300 DPI
         Returns: (image_bytes, is_single_page)"""
         try:
@@ -1002,17 +1030,15 @@ Negative prompt: No text, no letters, no words, no signs, no labels, no captions
             # Open image with PIL
             img = Image.open(io.BytesIO(response.content))
             
-            # Determine if this is a single page (cover or coloring page)
-            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
+            # Determine if this is a single page (cover, coloring pages, or back cover)
+            page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else None
+            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13 or page_key == 'page last page'
             
             # Physical dimensions in inches
             dpi = 300
-            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13
             
             if is_single_page:
-                # Square pages: cover and coloring pages
+                # Square pages: cover, coloring pages, and back cover
                 width_inches = 8.5
                 height_inches = 8.5
             else:
