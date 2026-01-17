@@ -8,6 +8,7 @@ class GenerateImageRequest(BaseModel):
    age: int = Field(description="Child's age")
    language: str = Field(description="Story language")
    image_style: str = Field(description="Desired illustration style")
+   image: Optional[str] = Field(default=None, description="s3 bucket uploaded url of the reference image")
 
 class PageImageUrls(BaseModel):
     name: str = Field(description="Page identifier (e.g., 'page 1')")

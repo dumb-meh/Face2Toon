@@ -11,3 +11,4 @@ openai
 boto3
 reportlab
 PyPDF2
+google-genai
