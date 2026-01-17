@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from google import genai
 from google.genai import types
 import io
@@ -9,6 +9,19 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 import os
 from pathlib import Path
+import requests
+import base64
+import openai
+import numpy as np
+
+# Optional OpenCV import for face detection; graceful fallback if not installed
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except Exception:
+    CV2_AVAILABLE = False
+    cv2 = None
+
 
 router = APIRouter()
 
@@ -237,6 +250,176 @@ async def add_text_with_face_avoidance(
         media_type="image/png",
         headers=headers
     )
+
+
+# -------------------------
+# Reference image analysis
+# -------------------------
+
+class CharacterAnalysis(BaseModel):
+    is_single_child: bool
+    facial_features: Optional[Dict[str, Any]] = None
+    unique_attributes: Optional[List[str]] = None
+    skin_tone: Optional[str] = None
+    ethnicity: Optional[str] = None
+    dress_color: Optional[str] = None
+    hair_color: Optional[str] = None
+    eye_color: Optional[str] = None
+    accessories: Optional[List[str]] = None
+    canonical_clothing: Optional[str] = None
+    confidence: Optional[Dict[str, float]] = None
+    notes: Optional[str] = None
+
+
+def _downscale_image_for_embedding(img: Image.Image, max_size: int = 1024) -> Image.Image:
+    """Downscale large images to a sensible size for embedding/vision model."""
+    w, h = img.size
+    if max(w, h) <= max_size:
+        return img
+    scale = max_size / float(max(w, h))
+    new_size = (int(w * scale), int(h * scale))
+    return img.resize(new_size, Image.LANCZOS)
+
+
+async def _send_image_to_gpt_vision(image_bytes: bytes, prompt_text: str) -> Dict[str, Any]:
+    """Send the image + prompt to the GPT-4.1 vision model and return parsed JSON.
+
+    This function centralizes the GPT call so it can be replaced with Gemini later.
+    """
+    # Initialize OpenAI client
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    # Convert image bytes to base64 data URL to include in the prompt
+    # We downscale first to reduce payload size
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img_small = _downscale_image_for_embedding(img)
+    buf = io.BytesIO()
+    img_small.save(buf, format="JPEG", quality=85)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    data_url = f"data:image/jpeg;base64,{b64}"
+
+    full_prompt = (
+        "You will be provided with an image embedded as a data URL and a set of instructions. "
+        "Analyze the visual content of the image and return ONLY valid JSON (no markdown).")
+    full_prompt += "\n\nImage data (base64): " + data_url + "\n\n"
+    full_prompt += prompt_text
+
+    # Ask for structured JSON output describing the child
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.0,
+            max_tokens=1000
+        )
+
+        response_text = completion.choices[0].message.content.strip()
+
+        # Remove code fences if present
+        if response_text.startswith("```"):
+            parts = response_text.split("```")
+            if len(parts) >= 2:
+                response_text = parts[1]
+
+        # Parse JSON
+        parsed = json.loads(response_text)
+        return parsed
+
+    except Exception as e:
+        print(f"[GPT Vision] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Vision model failed: {e}")
+
+
+async def analyze_reference_image_from_url(image_url: str) -> Dict[str, Any]:
+    """Download image, check single child, and extract visual attributes.
+
+    Returns an empty dict if the image does not contain exactly one face.
+    """
+    try:
+        resp = requests.get(image_url, timeout=60)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to download image: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail=f"Failed to download image: status {resp.status_code}")
+
+    image_bytes = resp.content
+
+    # Face detection: prefer OpenCV if available, otherwise ask GPT to verify number of people
+    faces_count = None
+    notes = ""
+
+    if CV2_AVAILABLE:
+        try:
+            arr = np.frombuffer(image_bytes, np.uint8)
+            img_cv = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            faces_count = len(faces)
+        except Exception as e:
+            print(f"[FaceDetection] OpenCV failed: {e}")
+            faces_count = None
+            notes += "OpenCV face detection failed; falling back to model. "
+
+    if faces_count is None:
+        # Ask the model to count people in the image first
+        prompt_for_count = (
+            "Analyze the provided image and return JSON: {\n  \"people_count\": <int>\n}. "
+            "If you cannot confidently determine count, return people_count as -1. "
+            "Do NOT include any extra text or markdown."
+        )
+        parsed_count = await _send_image_to_gpt_vision(image_bytes, prompt_for_count)
+        try:
+            people_count = int(parsed_count.get("people_count", -1))
+        except Exception:
+            people_count = -1
+        if people_count == -1:
+            raise HTTPException(status_code=500, detail="Vision model could not determine number of people in the image")
+        faces_count = people_count
+
+    if faces_count != 1:
+        # Per requirement, return empty response (no data) if not a single child image
+        print(f"[ImageAnalysis] Detected {faces_count} faces; returning empty response.")
+        return {}
+
+    # If single face, ask model for detailed attributes
+    prompt_for_attributes = (
+        "Analyze the provided image and return ONLY valid JSON (no markdown) with the following fields:\n"
+        "{\n"
+        "  \"is_single_child\": true,\n"
+        "  \"facial_features\": {\"shape\": <str>, \"notable_marks\": <list of str>},\n"
+        "  \"unique_attributes\": [<list of key attributes>],\n"
+        "  \"skin_tone\": <str or 'unknown'>,\n"
+        "  \"ethnicity\": <str or 'unknown'>,\n"
+        "  \"dress_color\": <str or 'unknown'>,\n"
+        "  \"hair_color\": <str or 'unknown'>,\n"
+        "  \"eye_color\": <str or 'unknown'>,\n"
+        "  \"accessories\": [<list>],\n"
+        "  \"canonical_clothing\": <short canonical string to be used verbatim in prompts>,\n"
+        "  \"confidence\": {<field>: <0.0-1.0>},\n"
+        "  \"notes\": <any clarifying notes>\n"
+        "}\n"
+        "Do NOT invent attributes; if you cannot tell from the image, set field to 'unknown' or an empty list."
+    )
+
+    attributes = await _send_image_to_gpt_vision(image_bytes, prompt_for_attributes)
+
+    # Ensure boolean field is present
+    attributes.setdefault("is_single_child", True)
+
+    return attributes
+
+
+@router.post("/analyze-reference-image")
+async def analyze_reference_image_endpoint(image_url: str):
+    """Endpoint: analyze an image by URL and return structured character attributes.
+
+    Returns an empty JSON object {} if the image does not contain exactly one face.
+    """
+    result = await analyze_reference_image_from_url(image_url)
+    return result
 
 
 

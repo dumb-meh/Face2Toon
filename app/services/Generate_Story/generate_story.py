@@ -1,8 +1,10 @@
 import os
 import json
 import openai
+import asyncio
 from dotenv import load_dotenv
 from .generate_story_schema import GenerateStoryResponse, GenerateStoryRequest
+from app.utils.image_analysis import analyze_reference_image_from_url
 
 load_dotenv()
 
@@ -11,11 +13,70 @@ class GenerateStory:
         self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def get_generate_story(self, input_data: dict) -> GenerateStoryResponse:
+        # If image(s) provided, attempt to analyze the first image URL to extract visual attributes
+        image_urls = input_data.get("image") or []
+        extracted_profile = None
+        if image_urls and analyze_reference_image_from_url:
+            first_url = image_urls[0]
+            try:
+                # analyze_reference_image_from_url is async; run it from sync code
+                extracted_profile = asyncio.run(analyze_reference_image_from_url(first_url))
+                # If analyzer returns empty dict => not a single-child image; ignore
+                if not extracted_profile:
+                    extracted_profile = None
+            except Exception as e:
+                # Log and continue without profile
+                print(f"[GenerateStory] Image analysis failed: {e}")
+                extracted_profile = None
+
+        # Attach extracted profile to input_data for prompt generation
+        if extracted_profile:
+            input_data["image_attributes"] = extracted_profile
+            # Also augment character_description list to include canonical_clothing and accessories if available
+            if isinstance(input_data.get("character_description"), list):
+                if extracted_profile.get("canonical_clothing"):
+                    input_data["character_description"].append(extracted_profile.get("canonical_clothing"))
+                if extracted_profile.get("unique_attributes"):
+                    input_data["character_description"].extend(extracted_profile.get("unique_attributes"))
+            else:
+                input_data["character_description"] = []
+                if extracted_profile.get("canonical_clothing"):
+                    input_data["character_description"].append(extracted_profile.get("canonical_clothing"))
+                if extracted_profile.get("unique_attributes"):
+                    input_data["character_description"].extend(extracted_profile.get("unique_attributes"))
+
         prompt = self.create_prompt(input_data)
         response = self.get_openai_response(prompt)
         return response
 
     def create_prompt(self, input_data: dict) -> str:
+        # Build extracted attributes string if available
+        extracted_attrs = input_data.get("image_attributes")
+        attrs_str = "N/A"
+        if extracted_attrs:
+            attrs_parts = []
+            if extracted_attrs.get("facial_features"):
+                attrs_parts.append(f"Facial features: {extracted_attrs['facial_features']}")
+            if extracted_attrs.get("unique_attributes"):
+                attrs_parts.append(f"Unique attributes: {', '.join(extracted_attrs['unique_attributes'])}")
+            if extracted_attrs.get("skin_tone"):
+                attrs_parts.append(f"Skin tone: {extracted_attrs['skin_tone']}")
+            if extracted_attrs.get("ethnicity"):
+                attrs_parts.append(f"Ethnicity: {extracted_attrs['ethnicity']}")
+            if extracted_attrs.get("dress_color"):
+                attrs_parts.append(f"Dress color: {extracted_attrs['dress_color']}")
+            if extracted_attrs.get("hair_color"):
+                attrs_parts.append(f"Hair color: {extracted_attrs['hair_color']}")
+            if extracted_attrs.get("eye_color"):
+                attrs_parts.append(f"Eye color: {extracted_attrs['eye_color']}")
+            if extracted_attrs.get("accessories"):
+                attrs_parts.append(f"Accessories: {', '.join(extracted_attrs['accessories'])}")
+            if extracted_attrs.get("canonical_clothing"):
+                attrs_parts.append(f"Canonical clothing: {extracted_attrs['canonical_clothing']}")
+            if extracted_attrs.get("notes"):
+                attrs_parts.append(f"Notes: {extracted_attrs['notes']}")
+            attrs_str = "; ".join(attrs_parts) if attrs_parts else "N/A"
+
         return f"""You are a children's book author and illustrator assistant. Create a complete children's book with 1 cover page, 11 story pages, 2 coloring pages, and 1 back cover.
 
 Child Information:
@@ -26,6 +87,7 @@ Child Information:
 - Language: {input_data['language']}
 - Story Theme/Input: {input_data['user_input']}
 -Character Description: {', '.join(input_data['character_description']) if input_data.get('character_description') else 'N/A'}
+-Extracted Visual Attributes: {attrs_str}
 
 Requirements:
 1. Create a story appropriate for a {input_data['age']}-year-old child
@@ -54,34 +116,13 @@ Return a JSON object with three fields:
    - CRITICAL: Image models have limited reasoning - prompts must be extremely specific and descriptive
    
    PROMPT GUIDELINES:
-   - For "page 0" (cover): Start with "The child from the reference image..." and describe a compelling cover scene with the story title
-   - For story pages (1-11): Start with "The main character {input_data['name']}..." or "The child..." (do NOT say 'from reference image')
-   - For coloring pages (12-13): MUST include "black and white coloring page" at the beginning, then describe a memorable scene from the story with clear outlines and simple details suitable for children to color
-   - For "page last page" (back cover): Start with "Back cover illustration showing the child from the reference image..." and describe a beautiful closing scene that wraps up the story's theme or shows the character in a peaceful/happy ending moment
-   - Be very specific about EVERY element in the scene
-   - Do NOT describe facial features, skin tone, eye color, hair color/style - these are maintained from previous images
-   - DO describe: exact clothing details (colors, patterns, type), specific pose, precise actions, setting details
-   - Specify background elements, lighting, mood, other characters (with detailed descriptions)
-   - If clothing appears in multiple pages, specify EXACT same colors/patterns to maintain consistency
-   - Include composition details: foreground, midground, background elements
-   - Each prompt should be 4-6 detailed sentences in English
-   - Add negative prompting at the end: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
-   
-   COLORING PAGE SPECIFIC GUIDELINES (pages 12-13):
-   - Start with: "Black and white coloring page illustration..."
-   - Describe a key scene from the story that would be fun to color
-   - Specify clear, bold outlines with simple details
-   - Mention "line art style, coloring book page, simple shapes, child-friendly"
-   - No shading, no color - only black outlines on white background
-   - Add: "Simple line drawing, no colors, no shading, no gradients, suitable for children to color"
+   - NOTE: The 'Extracted Visual Attributes' are derived from analyzing a reference image of the child. Use these attributes to inform the story narrative (e.g., incorporate ethnicity, accessories, or unique features into the plot where appropriate). Hair color, eye color, skin tone, and facial features will be maintained from the reference image analysis if provided; describe them in the image prompts.
+   - For "page 0" (cover): Start with "The child from the reference image..." and describe a compelling cover scene with the story title.
+   - For story pages (1-11): Start with "The main character {input_data['name']}..." or "The child..." (do NOT say 'from reference image'). Be very specific about clothing (exact colors/patterns), pose, actions, setting, background, lighting, mood, and other characters. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English, end with negative prompting: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
+   - For coloring pages (12-13): Start with "Black and white coloring page illustration..." Describe a key scene with clear outlines, simple details, line art style, no shading/color. End with "Simple line drawing, no colors, no shading, no gradients, suitable for children to color. Maintain character appearance."
+   - For "page last page" (back cover): Start with "Back cover illustration showing the child from the reference image..." Describe a peaceful closing scene. 4-6 detailed sentences, end with negative prompting.
    
    Style: {input_data['image_style']}
-   
-   EXAMPLE GOOD PROMPTS:
-   Page 0: "The child from the reference image wearing a red t-shirt with blue jeans, standing in a magical forest. [rest of detailed description]"
-   Page 1-11: "The child {input_data['name']} wearing a red t-shirt with blue jeans, standing in a sunny park with green grass and tall oak trees in the background. The child is holding a bright yellow kite with a long blue tail, smiling while looking up at the sky. Behind them, there's a wooden bench and a small pond with ducks. Warm afternoon sunlight creates soft shadows on the ground. The scene has a joyful, carefree mood with vibrant colors. Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
-   Page 12-13: "Black and white coloring page illustration showing the child {input_data['name']} holding a kite in a park. Clear, bold outlines with simple details. The child is in a standing pose with the kite string in hand, surrounded by simple tree outlines and cloud shapes. Line art style, coloring book page, simple shapes, child-friendly. Simple line drawing, no colors, no shading, no gradients, suitable for children to color. Maintain character appearance."
-   Page 14: "Back cover illustration showing the child from the reference image wearing a red t-shirt and blue jeans, sitting peacefully under a large oak tree at sunset. The child is reading a book with a content smile, surrounded by colorful autumn leaves. Golden hour lighting creates a warm, nostalgic atmosphere. In the background, the magical forest from the story fades into soft focus. Birds fly across the orange and pink sunset sky. The scene conveys a sense of completion, peace, and the joy of storytelling. Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
 
 3. "page_connections": A dictionary mapping pages that should maintain visual consistency
    - STRICT CRITERIA: Only create connections when BOTH conditions are met:
@@ -118,7 +159,7 @@ Generate the complete children's book now in valid JSON format only."""
         completion = self.client.chat.completions.create(
             model="gpt-4.1",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
+            temperature=0.9,
             max_tokens=4000,
             response_format={"type": "json_object"}
         )
