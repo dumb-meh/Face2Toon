@@ -16,7 +16,6 @@ from datetime import datetime
 from app.utils.upload_to_bucket import upload_file_to_s3, upload_file_object_to_s3
 from app.utils.image_processing import resize_image_to_print_size, convert_dict_to_structured
 from app.utils.pdf_generator import generate_pdf
-from app.utils.text_insertion_worker import text_insertion_worker
 
 load_dotenv()
 
@@ -196,39 +195,19 @@ class GenerateImages:
         dpi: int = 300,
         language: str= "English"
     ) -> tuple[Dict[str, str], Dict[str, str], Dict[str, bytes]]:
-        """Generate images for specified pages using SeeDream API with async queue-based text insertion
+        """Generate images for specified pages using SeeDream API with async parallel text insertion
         Returns: (image_urls, full_image_urls, image_bytes)"""
-        # Create shared results dictionary for text workers
+        # Create shared results dictionary for text insertion
         results_dict = {
             'image_urls': {},
             'full_image_urls': {},
             'image_bytes': {}
         }
         
-        # Create text insertion queue
-        text_queue = asyncio.Queue()
+        # Import text insertion function
+        from app.utils.text_insertion_worker import process_single_page_text
         
-        # Start text insertion workers (5 workers for parallel processing - max 5 concurrent text insertions)
-        num_workers = 5
-        worker_tasks = []
-        for i in range(num_workers):
-            task = asyncio.create_task(
-                text_insertion_worker(
-                    text_queue,
-                    results_dict,
-                    story or {},
-                    font_size,
-                    text_color,
-                    dpi,
-                    session_id,
-                    upload_to_s3,
-                    book_uuid,
-                    language
-                )
-            )
-            worker_tasks.append(task)
-        
-        print(f"[Queue System] Started {num_workers} text insertion workers (max {num_workers} concurrent)")
+        print(f"[Processing] Using direct parallel text insertion (no queue)")
         
         image_urls = {}
         full_image_urls = {}  # Store full image URLs separately
@@ -284,10 +263,10 @@ class GenerateImages:
             except Exception as e:
                 print(f"Error processing page 0 URL: {str(e)}")
         
-        # If page_1_url is provided, read the image from local disk and split it
+        # If page_1_url is provided, read the split images from local disk (they already have text!)
         if page_1_url and should_split:
             try:
-                # Extract filename from URL and read from local uploads folder
+                # Extract the directory path from the full image URL
                 if page_1_url.startswith('http'):
                     from urllib.parse import urlparse
                     parsed = urlparse(page_1_url)
@@ -295,52 +274,50 @@ class GenerateImages:
                 else:
                     file_path = page_1_url.lstrip('/')
                 
-                # Read the image file directly from local disk
-                if os.path.exists(file_path):
-                    with open(file_path, 'rb') as f:
-                        page_1_bytes = f.read()
-                    # Store bytes for AI use
-                    generated_images_bytes['page 1'] = page_1_bytes
+                # The full image is at: uploads/generated_images/{session_id}_image_1.png
+                # The split images are at: uploads/generated_images/splitted/{session_id}_page_1.png and page_2.png
+                
+                # Extract session_id from the file path
+                filename = os.path.basename(file_path)
+                # Format: {session_id}_image_1.png
+                split_session_id = filename.replace('_image_1.png', '')
+                
+                # Construct paths to the split images (these already have text!)
+                left_filename_local = f"uploads/generated_images/splitted/{split_session_id}_page_1.png"
+                right_filename_local = f"uploads/generated_images/splitted/{split_session_id}_page_2.png"
+                
+                # Check if split images exist
+                if os.path.exists(left_filename_local) and os.path.exists(right_filename_local):
+                    print(f"[Split Images] Found existing split images with text:")
+                    print(f"  - Left: {left_filename_local}")
+                    print(f"  - Right: {right_filename_local}")
                     
-                    # Split page 1 image into page 1 and page 2
-                    # Keep reference to BytesIO to prevent garbage collection
-                    img_buffer = io.BytesIO(page_1_bytes)
-                    img = Image.open(img_buffer)
-                    img.load()  # Force load image data before operations
+                    # Read the split images (these already contain text)
+                    with open(left_filename_local, 'rb') as f:
+                        left_bytes_for_pdf = f.read()
+                    with open(right_filename_local, 'rb') as f:
+                        right_bytes_for_pdf = f.read()
                     
-                    # Convert to RGB to ensure complete independence from buffer
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
-                    
-                    middle_x = img.width // 2
-                    
-                    # Create independent copies of cropped regions
-                    left_half = img.crop((0, 0, middle_x, img.height)).copy()
-                    right_half = img.crop((middle_x, 0, img.width, img.height)).copy()
+                    # Also read the full image for reference
+                    if os.path.exists(file_path):
+                        with open(file_path, 'rb') as f:
+                            page_1_bytes = f.read()
+                        generated_images_bytes['page 1'] = page_1_bytes
                     
                     if upload_to_s3:
-                        # Upload full page 1 image to S3 first
-                        full_page_1_buffer = io.BytesIO(page_1_bytes)
-                        full_page_1_object_name = f"facetoon/{book_uuid}/full/image_1.png"
-                        full_page_1_result = upload_file_object_to_s3(full_page_1_buffer, object_name=full_page_1_object_name)
+                        # Upload full page 1 image to S3
+                        if os.path.exists(file_path):
+                            full_page_1_buffer = io.BytesIO(page_1_bytes)
+                            full_page_1_object_name = f"facetoon/{book_uuid}/full/image_1.png"
+                            full_page_1_result = upload_file_object_to_s3(full_page_1_buffer, object_name=full_page_1_object_name)
+                            
+                            if full_page_1_result['success']:
+                                results_dict['full_image_urls']['page 1'] = full_page_1_result['url']
+                                print(f"Uploaded full page 1 to S3: {full_page_1_result['url']}")
                         
-                        if full_page_1_result['success']:
-                            results_dict['full_image_urls']['page 1'] = full_page_1_result['url']
-                            print(f"Uploaded full page 1 to S3: {full_page_1_result['url']}")
-                        
-                        # Upload split images to S3
-                        left_buffer = io.BytesIO()
-                        right_buffer = io.BytesIO()
-                        left_half.save(left_buffer, format='PNG', dpi=(300, 300))
-                        right_half.save(right_buffer, format='PNG', dpi=(300, 300))
-                        left_buffer.seek(0)
-                        right_buffer.seek(0)
-                        
-                        # Read bytes for PDF BEFORE uploading (upload closes the buffer)
-                        left_bytes_for_pdf = left_buffer.read()
-                        right_bytes_for_pdf = right_buffer.read()
-                        left_buffer.seek(0)
-                        right_buffer.seek(0)
+                        # Upload the existing split images (with text) to S3
+                        left_buffer = io.BytesIO(left_bytes_for_pdf)
+                        right_buffer = io.BytesIO(right_bytes_for_pdf)
                         
                         left_object_name = f"facetoon/{book_uuid}/splitted/page_1.png"
                         right_object_name = f"facetoon/{book_uuid}/splitted/page_2.png"
@@ -351,14 +328,42 @@ class GenerateImages:
                         if left_result['success'] and right_result['success']:
                             results_dict['image_urls']['page 1'] = left_result['url']
                             results_dict['image_urls']['page 2'] = right_result['url']
-                            # Store bytes for PDF (already read before upload)
                             results_dict['image_bytes']['page 1'] = left_bytes_for_pdf
                             results_dict['image_bytes']['page 2'] = right_bytes_for_pdf
-                            print(f"Uploaded split page 1 to S3")
+                            print(f"Uploaded split page 1 (with text) to S3")
                             print(f"  - page 1: {left_result['url']}")
                             print(f"  - page 2: {right_result['url']}")
                         else:
                             print(f"Failed to upload split pages to S3")
+                    else:
+                        # Already stored locally, just set the URLs
+                        base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                        base_url = base_url.rstrip('/')
+                        
+                        results_dict['image_urls']['page 1'] = f"{base_url}/{left_filename_local}"
+                        results_dict['image_urls']['page 2'] = f"{base_url}/{right_filename_local}"
+                        results_dict['image_bytes']['page 1'] = left_bytes_for_pdf
+                        results_dict['image_bytes']['page 2'] = right_bytes_for_pdf
+                        
+                        if os.path.exists(file_path):
+                            results_dict['full_image_urls']['page 1'] = f"{base_url}/{file_path}"
+                        
+                        print(f"Using existing split page 1 images (with text)")
+                        print(f"  - page 1: {left_filename_local}")
+                        print(f"  - page 2: {right_filename_local}")
+                    
+                    page_counter_start = 1  # Next generated image will be image 1 (pages 3-4)
+                else:
+                    print(f"Warning: Split images not found at expected locations:")
+                    print(f"  - {left_filename_local}")
+                    print(f"  - {right_filename_local}")
+                    print(f"Will read full image and re-split (text will be lost)")
+                    # Fall through to old logic below
+            except Exception as e:
+                import traceback
+                print(f"Error loading split page 1 images: {str(e)}")
+                traceback.print_exc()
+                print(f"Will try to read full image and re-split")
                     else:
                         # Save locally
                         os.makedirs('uploads/generated_images/splitted', exist_ok=True)
@@ -445,10 +450,15 @@ class GenerateImages:
             # Store cover bytes for use as style reference
             cover_page_bytes = cover_bytes
             
-            # Send cover to text insertion queue immediately
-            await text_queue.put(('page 0', cover_bytes, 0, is_single))
-            print(f"[Queue System] Added page 0 (cover) to text insertion queue")
-            print(f"✓ Cover generated, text insertion started")
+            # Process cover text insertion immediately (non-blocking)
+            cover_task = asyncio.create_task(
+                process_single_page_text(
+                    'page 0', cover_bytes, 0, is_single,
+                    story or {}, font_size, text_color,
+                    dpi, session_id, upload_to_s3, book_uuid, language
+                )
+            )
+            print(f"✓ Cover generated, text insertion started in background")
         
         # Step 2: Generate remaining pages in batches
         if remaining_pages:
@@ -491,39 +501,110 @@ class GenerateImages:
                 if not is_coloring_page:
                     current_page_counter += 1
             
-            # Generate in batches and send to queue immediately
+            # Generate in batches with 2-second stagger (start next batch 2s after previous starts)
             total_batches = (len(pages_with_numbers) + self.parallel_batch_size - 1) // self.parallel_batch_size
             
-            for batch_idx in range(0, len(pages_with_numbers), self.parallel_batch_size):
+            all_text_tasks = []  # Track all text insertion tasks
+            
+            async def generate_batch_with_delay(batch_idx, delay_seconds):
+                """Generate a batch after a delay, then immediately start text insertion for that batch"""
+                if delay_seconds > 0:
+                    print(f"\n[Batch Scheduler] Waiting {delay_seconds}s before starting next batch...")
+                    await asyncio.sleep(delay_seconds)
+                
                 batch = pages_with_numbers[batch_idx:batch_idx + self.parallel_batch_size]
                 batch_num = (batch_idx // self.parallel_batch_size) + 1
                 
-                print(f"\n[Batch {batch_num}/{total_batches}] Generating {len(batch)} pages: {[p[0] for p in batch]}")
+                batch_start_time = time.time()
+                print(f"\n[Batch {batch_num}/{total_batches}] Starting generation of {len(batch)} pages: {[p[0] for p in batch]}")
                 
                 # Generate batch concurrently
                 batch_tasks = [generate_single_page(pk, pr, pn) for pk, pr, pn in batch]
                 batch_results = await asyncio.gather(*batch_tasks)
                 
-                # Immediately send batch results to text insertion queue
-                for page_key, image_bytes, page_num_for_split, is_single_page in batch_results:
-                    await text_queue.put((page_key, image_bytes, page_num_for_split, is_single_page))
-                    print(f"[Queue System] Added {page_key} to text insertion queue")
+                batch_gen_time = time.time() - batch_start_time
+                print(f"[Batch {batch_num}/{total_batches}] Generation complete in {batch_gen_time:.2f}s")
                 
-                print(f"✓ Batch {batch_num}/{total_batches} complete, sent to text insertion")
+                # Immediately process text insertion for ALL pages in this batch IN PARALLEL
+                print(f"[Batch {batch_num}/{total_batches}] Starting text insertion for {len(batch_results)} pages in parallel")
+                text_tasks = []
+                for page_key, image_bytes, page_num_for_split, is_single_page in batch_results:
+                    task = asyncio.create_task(
+                        process_single_page_text(
+                            page_key, image_bytes, page_num_for_split, is_single_page,
+                            story or {}, font_size, text_color,
+                            dpi, session_id, upload_to_s3, book_uuid, language
+                        )
+                    )
+                    text_tasks.append(task)
+                
+                # Wait for this batch's text insertion to complete and collect results
+                text_results = await asyncio.gather(*text_tasks)
+                
+                # Store results in shared dictionary
+                for result in text_results:
+                    if result:
+                        page_key = result['pageKey']
+                        if result.get('leftPageUrl'):
+                            # Split page - use returned page numbers
+                            left_page_num = result['leftPageNum']
+                            right_page_num = result['rightPageNum']
+                            results_dict['image_urls'][f'page {left_page_num}'] = result['leftPageUrl']
+                            results_dict['image_urls'][f'page {right_page_num}'] = result['rightPageUrl']
+                            # Store bytes if available
+                            if result.get('leftPageBytes'):
+                                results_dict['image_bytes'][f'page {left_page_num}'] = result['leftPageBytes']
+                            if result.get('rightPageBytes'):
+                                results_dict['image_bytes'][f'page {right_page_num}'] = result['rightPageBytes']
+                        else:
+                            # Single page (cover, coloring, back cover)
+                            results_dict['image_urls'][page_key] = result['fullPageUrl']
+                            # Store bytes for PDF if this is a numbered page
+                            if result.get('singlePageBytes'):
+                                results_dict['image_bytes'][page_key] = result['singlePageBytes']
+                        results_dict['full_image_urls'][page_key] = result['fullPageUrl']
+                
+                print(f"✓ Batch {batch_num}/{total_batches} text insertion complete")
+            
+            # Start all batches with staggered delays (each batch starts 2s after previous)
+            batch_tasks = []
+            for batch_idx in range(0, len(pages_with_numbers), self.parallel_batch_size):
+                delay = (batch_idx // self.parallel_batch_size) * 2  # 0s, 2s, 4s, 6s, etc.
+                task = asyncio.create_task(generate_batch_with_delay(batch_idx, delay))
+                batch_tasks.append(task)
+            
+            # Wait for all batches to complete (they run with staggered starts)
+            print(f"\n[Batch Scheduler] Starting {len(batch_tasks)} batches with 2s stagger")
+            await asyncio.gather(*batch_tasks)
+            print(f"\n[Batch Scheduler] All batches generation and text insertion complete")
         
         print(f"\n=== All image generation complete ===")
         print(f"Generated: {len(pages)} pages total")
         
-        # Signal workers to stop by adding poison pills
-        print(f"\n[Queue System] All images generated, waiting for text insertion to complete...")
-        for _ in range(num_workers):
-            await text_queue.put(None)
-        
-        # Wait for queue to be empty and workers to finish
-        await text_queue.join()
-        await asyncio.gather(*worker_tasks)
-        
-        print(f"[Queue System] All text insertions completed")
+        # Wait for cover text insertion if it was started
+        if 'page 0' in pages:
+            cover_result = await cover_task
+            if cover_result:
+                page_key = cover_result['pageKey']
+                if cover_result.get('leftPageUrl'):
+                    # Split page - use returned page numbers
+                    left_page_num = cover_result['leftPageNum']
+                    right_page_num = cover_result['rightPageNum']
+                    results_dict['image_urls'][f'page {left_page_num}'] = cover_result['leftPageUrl']
+                    results_dict['image_urls'][f'page {right_page_num}'] = cover_result['rightPageUrl']
+                    # Store bytes if available
+                    if cover_result.get('leftPageBytes'):
+                        results_dict['image_bytes'][f'page {left_page_num}'] = cover_result['leftPageBytes']
+                    if cover_result.get('rightPageBytes'):
+                        results_dict['image_bytes'][f'page {right_page_num}'] = cover_result['rightPageBytes']
+                else:
+                    # Single page
+                    results_dict['image_urls'][page_key] = cover_result['fullPageUrl']
+                    # Store bytes for PDF
+                    if cover_result.get('singlePageBytes'):
+                        results_dict['image_bytes'][page_key] = cover_result['singlePageBytes']
+                results_dict['full_image_urls'][page_key] = cover_result['fullPageUrl']
+            print(f"Cover text insertion complete")
         
         # Extract results from shared dictionary
         image_urls = results_dict['image_urls']

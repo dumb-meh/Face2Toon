@@ -72,11 +72,33 @@ def convert_dict_to_structured(image_urls: dict, full_image_urls: dict):
     print(f"[Convert] image_urls keys: {sorted(image_urls.keys())}")
     print(f"[Convert] full_image_urls keys: {sorted(full_image_urls.keys())}")
     
+    # Helper function to get sort key for page names
+    def get_sort_key(key):
+        if 'page' in key:
+            parts = key.split()
+            if len(parts) > 1:
+                if parts[1] == 'last':
+                    return 999  # Sort "page last page" at the end
+                elif parts[1].isdigit():
+                    return int(parts[1])
+        return 0
+    
     # Sort keys by page number
-    sorted_keys = sorted(image_urls.keys(), key=lambda x: int(x.split()[1]) if 'page' in x and x.split()[1].isdigit() else 0)
+    sorted_keys = sorted(image_urls.keys(), key=get_sort_key)
     
     for key in sorted_keys:
         url = image_urls[key]
+        
+        # Handle "page last page" as page 14 (back cover)
+        if key == 'page last page':
+            page_obj = PageImageUrls(
+                name="page 14",
+                fullPageUrl=full_image_urls.get(key, url),
+                leftUrl=None,
+                rightUrl=None
+            )
+            structured_pages.append(page_obj)
+            continue
         
         if 'page' in key:
             page_num_str = key.split()[1]
@@ -84,21 +106,6 @@ def convert_dict_to_structured(image_urls: dict, full_image_urls: dict):
                 page_num = int(page_num_str)
                 
                 if page_num in processed_pages:
-                    continue
-                
-                # Special handling: Pair pages 23-24 as "page 12" (coloring pages)
-                if page_num == 23:
-                    right_key = 'page 24'
-                    if right_key in image_urls:
-                        page_obj = PageImageUrls(
-                            name="page 12",
-                            fullPageUrl=None,
-                            leftUrl=url,
-                            rightUrl=image_urls[right_key]
-                        )
-                        structured_pages.append(page_obj)
-                        processed_pages.add(23)
-                        processed_pages.add(24)
                     continue
                 
                 # Cover page (page 0) - single image
@@ -113,8 +120,32 @@ def convert_dict_to_structured(image_urls: dict, full_image_urls: dict):
                     processed_pages.add(page_num)
                     continue
                 
-                # Regular split pairs (1-2, 3-4, etc.) - stops before page 23
-                if page_num % 2 == 1 and page_num < 23:
+                # Coloring pages (stored as page 23, page 24 to avoid conflict with splits)
+                # Return them as page 12 and page 13 in the API response
+                if page_num == 23:
+                    page_obj = PageImageUrls(
+                        name="page 12",
+                        fullPageUrl=full_image_urls.get(key, url),
+                        leftUrl=None,
+                        rightUrl=None
+                    )
+                    structured_pages.append(page_obj)
+                    processed_pages.add(page_num)
+                    continue
+                
+                if page_num == 24:
+                    page_obj = PageImageUrls(
+                        name="page 13",
+                        fullPageUrl=full_image_urls.get(key, url),
+                        leftUrl=None,
+                        rightUrl=None
+                    )
+                    structured_pages.append(page_obj)
+                    processed_pages.add(page_num)
+                    continue
+                
+                # Regular split pairs (1-2, 3-4, etc.)
+                if page_num % 2 == 1 and page_num > 0:
                     right_page_num = page_num + 1
                     right_key = f'page {right_page_num}'
                     
@@ -135,52 +166,11 @@ def convert_dict_to_structured(image_urls: dict, full_image_urls: dict):
                         processed_pages.add(right_page_num)
                         continue
                 
-            page_num_str = key.split()[1]
-            if page_num_str.isdigit():
-                page_num = int(page_num_str)
-                
-                # Skip if already processed
-                if page_num in processed_pages:
-                    continue
-                
-                # Check if this is part of a split pair (odd pages 1, 3, 5, etc. pair with even pages 2, 4, 6, etc.)
-                # Exception: pages 23 and 24 are separate single pages (coloring pages), not a split pair
-                if page_num % 2 == 1 and page_num > 0 and page_num < 23:
-                    right_page_num = page_num + 1
-                    right_key = f'page {right_page_num}'
-                    
-                    if right_key in image_urls:
-                        # Calculate original page number (reverse split calculation)
-                        original_page = (page_num - 1) // 2 + 1
-                        original_page_key = f"page {original_page}"
-                        full_url = full_image_urls.get(original_page_key)
-                        
-                        page_obj = PageImageUrls(
-                            name=original_page_key,
-                            fullPageUrl=full_url,
-                            leftUrl=url,
-                            rightUrl=image_urls[right_key]
-                        )
-                        structured_pages.append(page_obj)
-                        processed_pages.add(page_num)
-                        processed_pages.add(right_page_num)
-                    else:
-                        # Odd page without pair
-                        page_obj = PageImageUrls(name=key, fullPageUrl=url, leftUrl=None, rightUrl=None)
-                        structured_pages.append(page_obj)
-                        processed_pages.add(page_num)
-                elif page_num == 0 or page_num >= 23:
-                    # Cover page (0) or coloring pages (23, 24)
-                    if page_num not in processed_pages:
-                        page_obj = PageImageUrls(name=key, fullPageUrl=url, leftUrl=None, rightUrl=None)
-                        structured_pages.append(page_obj)
-                        processed_pages.add(page_num)
-                elif page_num % 2 == 0:
-                    # Even numbered pages that weren't paired (shouldn't happen normally)
-                    if page_num not in processed_pages:
-                        page_obj = PageImageUrls(name=key, fullPageUrl=url, leftUrl=None, rightUrl=None)
-                        structured_pages.append(page_obj)
-                        processed_pages.add(page_num)
+                # Even numbered pages that weren't paired (shouldn't happen normally)
+                if page_num % 2 == 0 and page_num not in processed_pages:
+                    page_obj = PageImageUrls(name=key, fullPageUrl=url, leftUrl=None, rightUrl=None)
+                    structured_pages.append(page_obj)
+                    processed_pages.add(page_num)
     
     print(f"[Convert] Created {len(structured_pages)} structured page objects")
     return structured_pages
