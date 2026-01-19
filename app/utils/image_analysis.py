@@ -326,6 +326,7 @@ class CharacterAnalysis(BaseModel):
     ethnicity: Optional[str] = None
     dress_color: Optional[str] = None
     hair_color: Optional[str] = None
+    hair_style: Optional[str] = None
     eye_color: Optional[str] = None
     accessories: Optional[List[str]] = None
     canonical_clothing: Optional[str] = None

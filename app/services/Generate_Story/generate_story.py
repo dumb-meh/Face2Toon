@@ -12,15 +12,14 @@ class GenerateStory:
     def __init__(self):
         self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    def get_generate_story(self, input_data: dict) -> GenerateStoryResponse:
+    async def get_generate_story(self, input_data: dict) -> GenerateStoryResponse:
         # If image(s) provided, attempt to analyze the first image URL to extract visual attributes
-        image_urls = input_data.get("image") or []
+        image_url = input_data.get("image")  # This is a string, not a list
         extracted_profile = None
-        if image_urls and analyze_reference_image_from_url:
-            first_url = image_urls[0]
+        if image_url and analyze_reference_image_from_url:
             try:
-                # analyze_reference_image_from_url is async; run it from sync code
-                extracted_profile = asyncio.run(analyze_reference_image_from_url(first_url))
+                # analyze_reference_image_from_url is async; await it directly
+                extracted_profile = await analyze_reference_image_from_url(image_url)
                 # If analyzer returns empty dict => not a single-child image; ignore
                 if not extracted_profile:
                     extracted_profile = None
@@ -67,6 +66,8 @@ class GenerateStory:
                 attrs_parts.append(f"Dress color: {extracted_attrs['dress_color']}")
             if extracted_attrs.get("hair_color"):
                 attrs_parts.append(f"Hair color: {extracted_attrs['hair_color']}")
+            if extracted_attrs.get("hair_style"):
+                attrs_parts.append(f"Hair style: {extracted_attrs['hair_style']}")
             if extracted_attrs.get("eye_color"):
                 attrs_parts.append(f"Eye color: {extracted_attrs['eye_color']}")
             if extracted_attrs.get("accessories"):
@@ -116,13 +117,18 @@ Return a JSON object with three fields:
    - CRITICAL: Image models have limited reasoning - prompts must be extremely specific and descriptive
    
    PROMPT GUIDELINES:
-   - NOTE: The 'Extracted Visual Attributes' are derived from analyzing a reference image of the child. Use these attributes to inform the story narrative (e.g., incorporate ethnicity, accessories, or unique features into the plot where appropriate). Hair color, eye color, skin tone, and facial features will be maintained from the reference image analysis if provided; describe them in the image prompts.
-   - For "page 0" (cover): Start with "The child from the reference image..." and describe a compelling cover scene with the story title.
-   - For story pages (1-11): Start with "The child from the reference image...". Be very specific about clothing (exact colors/patterns), pose, actions, setting, background, lighting, mood, and other characters. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English, end with negative prompting: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
-   - For coloring pages (12-13): Start with "Black and white coloring page illustration..." Describe a key scene with clear outlines, simple details, line art style, no shading/color. End with "Simple line drawing, no colors, no shading, no gradients, suitable for children to color. Maintain character appearance."
-   - For "page last page" (back cover): Start with "Back cover illustration showing the child from the reference image..." Describe a peaceful closing scene. 4-6 detailed sentences, end with negative prompting.
-   
-   Style: {input_data['image_style']}
+   - CRITICAL: EVERY image prompt MUST explicitly specify: hair color, hair style, eye color, skin tone, and clothing details. These are REQUIRED in every prompt.
+   - If 'Extracted Visual Attributes' are provided (from reference image analysis): Use those exact attributes in all prompts to maintain consistency.
+   - If NO extracted attributes: You MUST create and define these visual characteristics yourself based on:
+     1. Character Description (if provided)
+     2. The child's age, gender, and ethnicity/background that fits the story theme
+     3. Your creative judgment to create a consistent, appealing character
+   - Once you define the character's appearance (hair color, hair style, eye color, skin tone), maintain it EXACTLY across ALL pages.
+   - CRITICAL: ALL image prompts MUST include the image style "{input_data['image_style']}" at the beginning or within the first sentence
+   - For "page 0" (cover): Start with "{input_data['image_style']} style book cover illustration showing the child from the reference image..." OR if no reference image "...showing a {input_data['age']}-year-old {input_data['gender']} child with [specify hair color, hair style, eye color, skin tone]...". Include compelling cover scene with the story title.
+   - For story pages (1-11): Start with "{input_data['image_style']} style illustration showing the child..." ALWAYS include: hair color, hair style, eye color, skin tone, and clothing (exact colors/patterns). Be very specific about pose, actions, setting, background, lighting, mood, and other characters. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English, end with negative prompting: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
+   - For coloring pages (12-13): Start with "Black and white coloring page illustration..." (no style needed). Describe a key scene with clear outlines, simple details, line art style, no shading/color. Still mention hair style, facial features for consistency. End with "Simple line drawing, no colors, no shading, no gradients, suitable for children to color. Maintain character appearance."
+   - For "page last page" (back cover): Start with "{input_data['image_style']} style back cover illustration showing the child..." Include hair color, hair style, eye color, skin tone. Describe a peaceful closing scene. 4-6 detailed sentences, end with negative prompting.
 
 
 
@@ -135,10 +141,10 @@ Example output structure:
     "page last page": ""
   }},
   "prompt": {{
-    "page 0": "Book cover illustration showing the child from the reference image wearing...[detailed 4-6 sentence prompt]",
-    "page 1": "The child {input_data['name']} wearing a blue striped shirt and khaki shorts...[detailed 4-6 sentence prompt with negative prompting]",
-    "page 2": "The main character {input_data['name']} now in different clothing, a green sweater...[detailed prompt]",
-    "page last page": "Back cover illustration showing the child from the reference image...[detailed 4-6 sentence prompt]"
+    "page 0": "{input_data['image_style']} style book cover illustration showing a {input_data['age']}-year-old {input_data['gender']} child with [brown curly hair, bright green eyes, warm tan skin tone] wearing...[detailed 4-6 sentence prompt]",
+    "page 1": "{input_data['image_style']} style illustration showing the child with brown curly hair, bright green eyes, and warm tan skin tone wearing a blue striped shirt and khaki shorts...[detailed 4-6 sentence prompt with negative prompting]",
+    "page 2": "{input_data['image_style']} style illustration showing the child with brown curly hair, bright green eyes, and warm tan skin tone now wearing different clothing, a green sweater...[detailed prompt]",
+    "page last page": "{input_data['image_style']} style back cover illustration showing the child with brown curly hair, bright green eyes, and warm tan skin tone...[detailed 4-6 sentence prompt]"
   }}
 
 }}

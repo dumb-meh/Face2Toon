@@ -7,7 +7,7 @@ generate_story= GenerateStory()
 @router.post("/generate_story", response_model=GenerateStoryResponse)
 async def  get_generate_story(request: GenerateStoryRequest):
     try:
-        response = generate_story.get_generate_story(request.dict())
+        response = await generate_story.get_generate_story(request.dict())
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

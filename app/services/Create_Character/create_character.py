@@ -76,7 +76,7 @@ Return the response in this exact JSON format:
     "gender": "boy or girl",
     "story_prompt": "Detailed story prompt like a user would write - what story they want created",
     "story_theme": "short theme category",
-    "character": ["name:child's name","gender: boy or girl","age:age_number","race/ethnicity", "eye color", "hair description", "distinguishing features", "clothing style", "personality trait 1", "personality trait 2"]
+    "character": ["name:child's name","gender: boy or girl","age:age_number","race/ethnicity", "eye color", "hair description","hair color", "distinguishing features", "clothing style", "personality trait 1", "personality trait 2"]
 }}
 """
         return prompt
