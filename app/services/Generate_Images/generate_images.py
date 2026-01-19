@@ -28,6 +28,16 @@ class GenerateImages:
         self.base_url = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
         self.parallel_batch_size = 5  # Generate 5 images at once in parallel mode
     
+    @staticmethod
+    def _get_page_number(page_key: str) -> int:
+        """Extract page number from page_key, mapping 'page last page' to 14"""
+        if page_key == 'page last page':
+            return 14  # Back cover page
+        elif page_key.startswith('page ') and page_key.split()[1].isdigit():
+            return int(page_key.split()[1])
+        else:
+            return 0
+    
     async def generate_first_two_page(
         self,
         prompts: Dict[str, str],
@@ -471,7 +481,7 @@ class GenerateImages:
             
             for page_key, prompt in remaining_pages.items():
                 # Determine page_number for splitting calculation
-                page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else 0
+                page_num = self._get_page_number(page_key)
                 is_coloring_page = page_num == 12 or page_num == 13
                 
                 page_num_for_split = current_page_counter
@@ -557,7 +567,7 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, TITLES, LABELS, OR ANY WRITTEN CHARACTERS IN
 """.strip()
             else:
                 # Check if this is a coloring page (pages 12 or 13)
-                page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
+                page_num = self._get_page_number(page_key)
                 is_coloring_page = page_num == 12 or page_num == 13
                 
                 # Story pages - no text generation, image only
@@ -584,8 +594,8 @@ Negative prompt: No text, no letters, no words, no signs, no labels, no captions
             # Pages 0, 12, 13, 14: 8.5"x8.5" at 300 DPI = 2550x2550 pixels
             # Other pages: 16:9 aspect ratio (5120x2880) to later resize to 5100x2550 (17"x8.5" at 300 DPI)
             # Note: Cannot use 'size' and 'width'/'height' together per SeeDream docs
-            page_num = int(page_key.split()[1]) if page_key.startswith('page ') else 0
-            if page_key == 'page 0' or page_num == 12 or page_num == 13 or page_key == 'page last page':
+            page_num = self._get_page_number(page_key)
+            if page_num == 0 or page_num == 12 or page_num == 13 or page_num == 14:
                 # Square format for cover, coloring pages, and back cover
                 width = 2550
                 height = 2550
@@ -649,7 +659,7 @@ Negative prompt: No text, no letters, no words, no signs, no labels, no captions
                 raise Exception(f"No image URL in response: {result}")
             
             # Download and resize image to final dimensions
-            image_bytes, is_single_page = resize_image_to_print_size(image_url, page_key, session_id)
+            image_bytes, is_single_page = resize_image_to_print_size(image_url, page_key)
             
             # Return bytes and is_single_page flag
             return image_bytes, is_single_page

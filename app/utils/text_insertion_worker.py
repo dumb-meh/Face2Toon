@@ -53,7 +53,12 @@ async def text_insertion_worker(
             full_image_bytes_no_text.seek(0)
             
             # Determine page number for special pages
-            page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else None
+            if page_key == 'page last page':
+                page_num = 14  # Back cover
+            elif page_key.startswith('page ') and page_key.split()[1].isdigit():
+                page_num = int(page_key.split()[1])
+            else:
+                page_num = 0
             
             # For coloring pages (12, 13), upload to splitted/ with page_23/page_24 naming
             # For other single pages, upload to full/

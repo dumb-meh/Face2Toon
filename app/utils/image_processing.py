@@ -1,11 +1,12 @@
 import io
 import requests
 from PIL import Image
+from app.services.Generate_Images.generate_images_schema import PageImageUrls
 
 
-def resize_image_to_print_size(image_url: str, page_key: str, session_id: str) -> tuple[bytes, bool]:
+def resize_image_to_print_size(image_url: str, page_key: str) -> tuple[bytes, bool]:
     """Download image and resize to exact physical dimensions
-    Pages 0, 12, 13, 'page last page': 8.5" x 8.5" at 300 DPI (cover, coloring pages, and back cover)
+    Pages 0, 12, 13, 14 (last page): 8.5" x 8.5" at 300 DPI (cover, coloring pages, and back cover)
     Other pages: 17" width x 8.5" height at 300 DPI
     Returns: (image_bytes, is_single_page)"""
     try:
@@ -17,8 +18,14 @@ def resize_image_to_print_size(image_url: str, page_key: str, session_id: str) -
         img = Image.open(io.BytesIO(response.content))
         
         # Determine if this is a single page (cover, coloring pages, or back cover)
-        page_num = int(page_key.split()[1]) if page_key.startswith('page ') and page_key.split()[1].isdigit() else None
-        is_single_page = page_key == 'page 0' or page_num == 12 or page_num == 13 or page_key == 'page last page'
+        if page_key == 'page last page':
+            page_num = 14
+        elif page_key.startswith('page ') and page_key.split()[1].isdigit():
+            page_num = int(page_key.split()[1])
+        else:
+            page_num = 0
+        
+        is_single_page = page_num == 0 or page_num == 12 or page_num == 13 or page_num == 14
         
         # Physical dimensions in inches
         dpi = 300
@@ -57,7 +64,6 @@ def resize_image_to_print_size(image_url: str, page_key: str, session_id: str) -
 
 def convert_dict_to_structured(image_urls: dict, full_image_urls: dict):
     """Convert flat dictionary to structured format with PageImageUrls objects"""
-    from .generate_images_schema import PageImageUrls
     
     structured_pages = []
     processed_pages = set()
