@@ -29,26 +29,29 @@ router = APIRouter()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 if gemini_api_key:
     os.environ["GOOGLE_API_KEY"] = gemini_api_key
-client = genai.Client()
+    client = genai.Client()
+else:
+    client = None
 
 # Hardcoded font metrics for Comic Relief font
 # Pre-calculated to avoid runtime computation
 FONT_METRICS = {
-    20: {'avg_char_width': 9.79, 'line_height': 23},
-    30: {'avg_char_width': 14.53, 'line_height': 33},
-    40: {'avg_char_width': 19.40, 'line_height': 44},
-    50: {'avg_char_width': 24.23, 'line_height': 54},
-    60: {'avg_char_width': 29.14, 'line_height': 65},
-    70: {'avg_char_width': 33.93, 'line_height': 77},
-    80: {'avg_char_width': 38.79, 'line_height': 87},
-    90: {'avg_char_width': 43.60, 'line_height': 98},
-    100: {'avg_char_width': 48.53, 'line_height': 108},
-    120: {'avg_char_width': 58.19, 'line_height': 131},
+    20: {'avg_char_width': 9.79, 'line_height': 23, 'max_char_height': 39},
+    30: {'avg_char_width': 14.53, 'line_height': 33, 'max_char_height': 57},
+    40: {'avg_char_width': 19.40, 'line_height': 44, 'max_char_height': 77},
+    50: {'avg_char_width': 24.23, 'line_height': 54, 'max_char_height': 95},
+    60: {'avg_char_width': 29.14, 'line_height': 65, 'max_char_height': 115},
+    70: {'avg_char_width': 33.93, 'line_height': 77, 'max_char_height': 132},
+    80: {'avg_char_width': 38.79, 'line_height': 87, 'max_char_height': 152},
+    90: {'avg_char_width': 43.60, 'line_height': 98, 'max_char_height': 170},
+    100: {'avg_char_width': 48.53, 'line_height': 108, 'max_char_height': 190},
+    120: {'avg_char_width': 58.19, 'line_height': 131, 'max_char_height': 227},
 }
 
 # Multipliers for font sizes not in the hardcoded dictionary
 AVG_CHAR_WIDTH_MULTIPLIER = 0.485  # multiply by font_size
-LINE_HEIGHT_MULTIPLIER = 1.09      # multiply by font_size
+LINE_HEIGHT_MULTIPLIER = 1.096      # multiply by font_size
+MAX_CHAR_HEIGHT_MULTIPLIER = 1.906  # multiply by font_size
 
 
 class LineCoordinate(BaseModel):
@@ -85,10 +88,12 @@ async def get_text_placement_recommendation(image_bytes: bytes, text: str,
         # Use pre-calculated metrics
         avg_char_width = FONT_METRICS[font_size]["avg_char_width"]
         line_height = FONT_METRICS[font_size]["line_height"]
+        max_char_height = FONT_METRICS[font_size]["max_char_height"]
     else:
         # Calculate using multipliers for custom font sizes
         avg_char_width = font_size * AVG_CHAR_WIDTH_MULTIPLIER
         line_height = int(font_size * LINE_HEIGHT_MULTIPLIER)
+        max_char_height = int(font_size * MAX_CHAR_HEIGHT_MULTIPLIER)
     
     # Calculate text dimensions
     text_width = len(text) * avg_char_width
@@ -216,24 +221,75 @@ async def add_text_with_face_avoidance(
         print(f"Warning: Error loading font: {e}, using default font")
         font = ImageFont.load_default()
     
-    # Draw each line of text with purple background per character and white text
+    # Get max_char_height for uniform background height
+    if font_size in FONT_METRICS:
+        max_char_height = FONT_METRICS[font_size]["max_char_height"]
+    else:
+        max_char_height = int(font_size * MAX_CHAR_HEIGHT_MULTIPLIER)
+    
+    # Step 1: Calculate the overall background area for ALL lines
+    if recommendation.line_coordinates:
+        first_line = recommendation.line_coordinates[0]
+        last_line = recommendation.line_coordinates[-1]
+        
+        # Reduce top space further, keep bottom space for descenders
+        bg_top = first_line.y - int(max_char_height * 0.01)  # 35% above baseline
+        bg_bottom = last_line.y + int(max_char_height * 0.55)  # 55% below baseline for descenders
+        
+        # Calculate left and right bounds for background
+        bg_left = float('inf')
+        bg_right = 0
+        
+        for line_coord in recommendation.line_coordinates:
+            current_x = line_coord.x
+            for char in line_coord.text:
+                char_bbox = draw.textbbox((current_x, line_coord.y), char, font=font)
+                bg_left = min(bg_left, char_bbox[0])
+                bg_right = max(bg_right, char_bbox[2])
+                current_x += char_bbox[2] - char_bbox[0]
+        
+        # Step 2: Create glittery/foggy purple background effect
+        # Create a semi-transparent layer for the gradient effect
+        overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        
+        # Draw multiple layers with decreasing opacity to create foggy effect
+        # Innermost layer (darkest, around text) to outermost (lightest)
+        num_layers = 15
+        for i in range(num_layers, 0, -1):
+            # Calculate expansion and opacity
+            expansion = i * 3  # How much to expand the rectangle
+            # Opacity: darker near text (higher alpha), lighter away from text
+            alpha = int(180 * (i / num_layers))  # 180 at center, fading to 0
+            
+            # Deep purple color with varying alpha
+            purple_color = (150, 100, 200, alpha)
+            
+            # Draw expanded rectangle
+            layer_left = bg_left - expansion
+            layer_top = bg_top - expansion
+            layer_right = bg_right + expansion
+            layer_bottom = bg_bottom + expansion
+            
+            overlay_draw.rectangle([layer_left, layer_top, layer_right, layer_bottom], fill=purple_color)
+        
+        # Composite the overlay onto the main image
+        img.paste(overlay, (0, 0), overlay)
+        draw = ImageDraw.Draw(img)  # Recreate draw object after compositing
+    
+    # Step 3: Draw all text on top of the background
     for line_coord in recommendation.line_coordinates:
         x, y = line_coord.x, line_coord.y
         line_text = line_coord.text
         
         current_x = x
         for char in line_text:
-            # Get bounding box for this character
-            char_bbox = draw.textbbox((current_x, y), char, font=font)
-            
-            # Draw purple background rectangle for this character
-            draw.rectangle(char_bbox, fill=(150, 100, 200))
-            
-            # Draw white character on top
             draw.text((current_x, y), char, font=font, fill=(255, 255, 255))
             
-            # Move to next character position
-            current_x += char_bbox[2] - char_bbox[0]
+            # Get character width to move to next position
+            char_bbox = draw.textbbox((current_x, y), char, font=font)
+            char_width = char_bbox[2] - char_bbox[0]
+            current_x += char_width
     
     # Save result
     output = io.BytesIO()
@@ -287,52 +343,51 @@ def _downscale_image_for_embedding(img: Image.Image, max_size: int = 1024) -> Im
     return img.resize(new_size, Image.LANCZOS)
 
 
-async def _send_image_to_gpt_vision(image_bytes: bytes, prompt_text: str) -> Dict[str, Any]:
-    """Send the image + prompt to the GPT-4.1 vision model and return parsed JSON.
+async def _send_image_to_gemini_vision(image_bytes: bytes, prompt_text: str) -> Dict[str, Any]:
+    """Send the image + prompt to the Gemini Vision model and return parsed JSON.
 
-    This function centralizes the GPT call so it can be replaced with Gemini later.
+    This function centralizes the Gemini call for vision analysis.
     """
-    # Initialize OpenAI client
-    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    if client is None:
+        raise HTTPException(status_code=500, detail="Gemini API key not configured")
 
-    # Convert image bytes to base64 data URL to include in the prompt
-    # We downscale first to reduce payload size
+    # Downscale image to reduce size for API limits
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_small = _downscale_image_for_embedding(img)
     buf = io.BytesIO()
     img_small.save(buf, format="JPEG", quality=85)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    data_url = f"data:image/jpeg;base64,{b64}"
+    image_bytes = buf.getvalue()
 
-    full_prompt = (
-        "You will be provided with an image embedded as a data URL and a set of instructions. "
-        "Analyze the visual content of the image and return ONLY valid JSON (no markdown).")
-    full_prompt += "\n\nImage data (base64): " + data_url + "\n\n"
-    full_prompt += prompt_text
+    # Create image part for Gemini
+    image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
 
-    # Ask for structured JSON output describing the child
     try:
-        completion = client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[{"role": "user", "content": full_prompt}],
-            temperature=0.0,
-            max_tokens=1000
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=[prompt_text, image_part]
         )
 
-        response_text = completion.choices[0].message.content.strip()
+        # Parse response
+        result_text = response.text.strip()
 
-        # Remove code fences if present
-        if response_text.startswith("```"):
-            parts = response_text.split("```")
+        # Remove markdown code blocks if present
+        if result_text.startswith("```"):
+            parts = result_text.split("```")
             if len(parts) >= 2:
-                response_text = parts[1]
+                result_text = parts[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
+
+        if not result_text:
+            raise Exception("Gemini Vision returned empty response")
 
         # Parse JSON
-        parsed = json.loads(response_text)
+        parsed = json.loads(result_text)
         return parsed
 
     except Exception as e:
-        print(f"[GPT Vision] Error: {e}")
+        print(f"[Gemini Vision] Error: {e}")
         raise HTTPException(status_code=500, detail=f"Vision model failed: {e}")
 
 
@@ -376,7 +431,7 @@ async def analyze_reference_image_from_url(image_url: str) -> Dict[str, Any]:
             "If you cannot confidently determine count, return people_count as -1. "
             "Do NOT include any extra text or markdown."
         )
-        parsed_count = await _send_image_to_gpt_vision(image_bytes, prompt_for_count)
+        parsed_count = await _send_image_to_gemini_vision(image_bytes, prompt_for_count)
         try:
             people_count = int(parsed_count.get("people_count", -1))
         except Exception:
@@ -410,7 +465,7 @@ async def analyze_reference_image_from_url(image_url: str) -> Dict[str, Any]:
         "Do NOT invent attributes; if you cannot tell from the image, set field to 'unknown' or an empty list."
     )
 
-    attributes = await _send_image_to_gpt_vision(image_bytes, prompt_for_attributes)
+    attributes = await _send_image_to_gemini_vision(image_bytes, prompt_for_attributes)
 
     # Ensure boolean field is present
     attributes.setdefault("is_single_child", True)

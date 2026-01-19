@@ -118,21 +118,13 @@ Return a JSON object with three fields:
    PROMPT GUIDELINES:
    - NOTE: The 'Extracted Visual Attributes' are derived from analyzing a reference image of the child. Use these attributes to inform the story narrative (e.g., incorporate ethnicity, accessories, or unique features into the plot where appropriate). Hair color, eye color, skin tone, and facial features will be maintained from the reference image analysis if provided; describe them in the image prompts.
    - For "page 0" (cover): Start with "The child from the reference image..." and describe a compelling cover scene with the story title.
-   - For story pages (1-11): Start with "The main character {input_data['name']}..." or "The child..." (do NOT say 'from reference image'). Be very specific about clothing (exact colors/patterns), pose, actions, setting, background, lighting, mood, and other characters. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English, end with negative prompting: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
+   - For story pages (1-11): Start with "The child from the reference image...". Be very specific about clothing (exact colors/patterns), pose, actions, setting, background, lighting, mood, and other characters. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English, end with negative prompting: "Maintain exact facial features, eyebrows, hair style, and overall character appearance. No changes to face structure, eye shape, or hair color."
    - For coloring pages (12-13): Start with "Black and white coloring page illustration..." Describe a key scene with clear outlines, simple details, line art style, no shading/color. End with "Simple line drawing, no colors, no shading, no gradients, suitable for children to color. Maintain character appearance."
    - For "page last page" (back cover): Start with "Back cover illustration showing the child from the reference image..." Describe a peaceful closing scene. 4-6 detailed sentences, end with negative prompting.
    
    Style: {input_data['image_style']}
 
-3. "page_connections": A dictionary mapping pages that should maintain visual consistency
-   - STRICT CRITERIA: Only create connections when BOTH conditions are met:
-     a) Pages feature the SAME character(s) in similar poses/positions, OR
-     b) Pages show the EXACT SAME location/setting
-   - Example: {{"page 3": "page 1"}} means page 3 visually references page 1
-   - Use sparingly - only when visual consistency is critical (same outfit, same room, continuation of action)
-   - Do NOT connect pages just because they're sequential
-   - Can be null or empty {{}} if no specific visual connections needed
-   - Think carefully: does this page show the same people in the same clothes AND/OR the same location?
+
 
 Example output structure:
 {{
@@ -140,17 +132,15 @@ Example output structure:
     "page 0": "The Adventures of [Name]",
     "page 1": "Once upon a time...",
     "page 2": "And then...",
-    "page 14": ""
+    "page last page": ""
   }},
   "prompt": {{
     "page 0": "Book cover illustration showing the child from the reference image wearing...[detailed 4-6 sentence prompt]",
     "page 1": "The child {input_data['name']} wearing a blue striped shirt and khaki shorts...[detailed 4-6 sentence prompt with negative prompting]",
     "page 2": "The main character {input_data['name']} now in different clothing, a green sweater...[detailed prompt]",
-    "page 14": "Back cover illustration showing the child from the reference image...[detailed 4-6 sentence prompt]"
-  }},
-  "page_connections": {{
-    "page 3": "page 2"
+    "page last page": "Back cover illustration showing the child from the reference image...[detailed 4-6 sentence prompt]"
   }}
+
 }}
 
 Generate the complete children's book now in valid JSON format only."""

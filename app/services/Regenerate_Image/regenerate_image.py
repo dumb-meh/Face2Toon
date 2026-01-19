@@ -694,7 +694,6 @@ class ReGenerateImage:
         enhanced_prompt = (
             f"{correction_instructions}"
             f"\n\nOriginal Prompt: {prompt}"
-            f"\n\nStory Content for that page: {story}"
             f"\n\nCharacter: {age_description}, illustrated in {image_style} style. "
             f"Ensure the character's gender is clearly {gender_description}, with appropriate features and appearance. "
             f"Verify all anatomical details are correct and natural-looking."

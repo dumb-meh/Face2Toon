@@ -9,7 +9,7 @@ class GenerateStoryRequest(BaseModel):
    language: str
    user_input: str
    character_description: Optional[List[str]] = None
-   image: Optional[List[str]] = None
+   image: Optional[str] = None
 
 class GenerateStoryResponse(BaseModel):
     story: Dict[str, str] = Field(
