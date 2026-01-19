@@ -364,49 +364,6 @@ class GenerateImages:
                 print(f"Error loading split page 1 images: {str(e)}")
                 traceback.print_exc()
                 print(f"Will try to read full image and re-split")
-                    else:
-                        # Save locally
-                        os.makedirs('uploads/generated_images/splitted', exist_ok=True)
-                        os.makedirs('uploads/generated_images', exist_ok=True)
-                        left_filename = f"uploads/generated_images/splitted/{session_id}_page_1.png"
-                        right_filename = f"uploads/generated_images/splitted/{session_id}_page_2.png"
-                        full_filename = f"uploads/generated_images/{session_id}_image_1.png"
-                        
-                        left_half.save(left_filename, format='PNG', dpi=(300, 300))
-                        right_half.save(right_filename, format='PNG', dpi=(300, 300))
-                        img.save(full_filename, format='PNG', dpi=(300, 300))
-                        
-                        # Read bytes for PDF
-                        left_buffer_for_pdf = io.BytesIO()
-                        right_buffer_for_pdf = io.BytesIO()
-                        left_half.save(left_buffer_for_pdf, format='PNG', dpi=(300, 300))
-                        right_half.save(right_buffer_for_pdf, format='PNG', dpi=(300, 300))
-                        left_buffer_for_pdf.seek(0)
-                        right_buffer_for_pdf.seek(0)
-                        left_bytes_for_pdf = left_buffer_for_pdf.read()
-                        right_bytes_for_pdf = right_buffer_for_pdf.read()
-                        
-                        base_url = os.getenv('domain') or os.getenv('BASE_URL')
-                        base_url = base_url.rstrip('/')
-                        
-                        results_dict['image_urls']['page 1'] = f"{base_url}/{left_filename}"
-                        results_dict['image_urls']['page 2'] = f"{base_url}/{right_filename}"
-                        results_dict['full_image_urls']['page 1'] = f"{base_url}/{full_filename}"
-                        results_dict['image_bytes']['page 1'] = left_bytes_for_pdf
-                        results_dict['image_bytes']['page 2'] = right_bytes_for_pdf
-                        
-                        print(f"Split provided page 1 into page 1 and page 2")
-                        print(f"  - page 1: {results_dict['image_urls']['page 1']}")
-                        print(f"  - page 2: {results_dict['image_urls']['page 2']}")
-                        print(f"  - full: {results_dict['full_image_urls']['page 1']}")
-                    
-                    page_counter_start = 1  # Next generated image will be image 1 (pages 3-4)
-                else:
-                    print(f"Warning: Page 1 image not found at: {file_path}")
-            except Exception as e:
-                import traceback
-                print(f"Error loading/splitting page 1 image: {str(e)}")
-                traceback.print_exc()
         
         page_counter = page_counter_start
         
