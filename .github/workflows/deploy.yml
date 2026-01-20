@@ -60,7 +60,7 @@ jobs:
         key: ${{ secrets.VPS_SSH_KEY }}
         port: ${{ secrets.VPS_PORT || 22 }}
         script: |
-          cd /var/www/Sui-Amor/
+          cd /var/www/Face2Toon/
           git pull origin main
           docker compose down
           docker compose up --build -d

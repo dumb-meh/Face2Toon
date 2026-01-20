@@ -624,20 +624,34 @@ The child's face, features, hair, and appearance must exactly match the referenc
 ABSOLUTELY NO TEXT, LETTERS, WORDS, TITLES, LABELS, OR ANY WRITTEN CHARACTERS IN THE IMAGE. Pure illustration only.
 """.strip()
             else:
-                # Check if this is a coloring page (pages 12 or 13)
+                # Check if this is a coloring page (pages 12 or 13) or back cover (page 14)
                 page_num = self._get_page_number(page_key)
-                is_coloring_page = page_num == 12 or page_num == 13
+                is_special_page = page_num == 12 or page_num == 13 or page_num == 14
                 
-                # Story pages - no text generation, image only
-                enhanced_prompt = f"""
+                # For story pages (1-11), add character positioning instruction
+                # For coloring/back cover pages, skip the positioning instruction
+                if not is_special_page:
+                    # Story pages (1-11) - will be split into two pages
+                    enhanced_prompt = f"""
 Children's illustration in {image_style} style.
 Main character: {age}-year-old {gender} child matching the reference images exactly.
 {prompt}
-CRITICAL COMPOSITION: This image will be split vertically down the middle. Position the character's face and body on the LEFT side OR RIGHT side of the composition, NEVER centered. Keep the character's face at least 30% away from the center vertical line.
+CRITICAL COMPOSITION: Position the character on the LEFT side OR RIGHT side of the image, NEVER in the center. Character should occupy one side of the scene.
 Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
 Maintain EXACT character appearance from reference images - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. Follow clothing colors and patterns from the prompt precisely.
 ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
-Negative prompt: No text, no centered character face, no changes to character appearance.
+Negative prompt: No text, no centered character, no changes to character appearance, no dividing lines, no seams, no split effects.
+""".strip()
+                else:
+                    # Coloring pages (12, 13) and back cover (14) - single page, no positioning needed
+                    enhanced_prompt = f"""
+Children's illustration in {image_style} style.
+Main character: {age}-year-old {gender} child matching the reference images exactly.
+{prompt}
+Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
+Maintain EXACT character appearance from reference images - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. Follow clothing colors and patterns from the prompt precisely.
+ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
+Negative prompt: No text, no changes to character appearance.
 """.strip()
             
             # Prepare headers
