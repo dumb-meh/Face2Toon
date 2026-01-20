@@ -116,17 +116,13 @@ class GenerateImages:
         
         # Determine which pages to generate
         if coverpage.lower() == "yes":
-            # Skip page 0 and page 1, generate all remaining pages
+            # Skip page 0 and page 1 - they already exist
             pages_to_generate = {k: v for k, v in prompts.items() if k not in ['page 0', 'page 1']}
             story_to_generate = {k: v for k, v in story.items() if k not in ['page 0', 'page 1']} if story else {}
         else:
-            # Generate all pages, but if page_1_url is provided, skip page 1 since it's already available
-            if page_1_url:
-                pages_to_generate = {k: v for k, v in prompts.items() if k != 'page 1'}
-                story_to_generate = {k: v for k, v in story.items() if k != 'page 1'} if story else {}
-            else:
-                pages_to_generate = prompts
-                story_to_generate = story if story else {}
+            # Generate all pages including page 0 and page 1
+            pages_to_generate = prompts
+            story_to_generate = story if story else {}
         
         # Check if sequential generation is forced
         force_sequential = sequential.lower() == "yes"
