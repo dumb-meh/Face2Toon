@@ -144,7 +144,7 @@ class GenerateImages:
             should_split=True,  # Enable splitting for full generation
             upload_to_s3=True,  # Upload to S3 for full generation
             book_uuid=book_uuid,
-            font_size=100,  # Updated font size
+            font_size=50,  # Default font size
             text_color="white",  # Default color
             dpi=300,
             language=language

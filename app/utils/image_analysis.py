@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 from google import genai
 from google.genai import types
 import io
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import json
 import os
 from pathlib import Path
@@ -221,75 +221,36 @@ async def add_text_with_face_avoidance(
         print(f"Warning: Error loading font: {e}, using default font")
         font = ImageFont.load_default()
     
-    # Get max_char_height for uniform background height
-    if font_size in FONT_METRICS:
-        max_char_height = FONT_METRICS[font_size]["max_char_height"]
-    else:
-        max_char_height = int(font_size * MAX_CHAR_HEIGHT_MULTIPLIER)
+    # Get image dimensions
+    width, height = img.size
     
-    # Step 1: Calculate the overall background area for ALL lines
-    if recommendation.line_coordinates:
-        first_line = recommendation.line_coordinates[0]
-        last_line = recommendation.line_coordinates[-1]
-        
-        # Reduce top space further, keep bottom space for descenders
-        bg_top = first_line.y - int(max_char_height * 0.01)  # 35% above baseline
-        bg_bottom = last_line.y + int(max_char_height * 0.55)  # 55% below baseline for descenders
-        
-        # Calculate left and right bounds for background
-        bg_left = float('inf')
-        bg_right = 0
-        
-        for line_coord in recommendation.line_coordinates:
-            current_x = line_coord.x
-            for char in line_coord.text:
-                char_bbox = draw.textbbox((current_x, line_coord.y), char, font=font)
-                bg_left = min(bg_left, char_bbox[0])
-                bg_right = max(bg_right, char_bbox[2])
-                current_x += char_bbox[2] - char_bbox[0]
-        
-        # Step 2: Create glittery/foggy purple background effect
-        # Create a semi-transparent layer for the gradient effect
-        overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-        overlay_draw = ImageDraw.Draw(overlay)
-        
-        # Draw multiple layers with decreasing opacity to create foggy effect
-        # Innermost layer (darkest, around text) to outermost (lightest)
-        num_layers = 15
-        for i in range(num_layers, 0, -1):
-            # Calculate expansion and opacity
-            expansion = i * 3  # How much to expand the rectangle
-            # Opacity: darker near text (higher alpha), lighter away from text
-            alpha = int(180 * (i / num_layers))  # 180 at center, fading to 0
-            
-            # Deep purple color with varying alpha
-            purple_color = (150, 100, 200, alpha)
-            
-            # Draw expanded rectangle
-            layer_left = bg_left - expansion
-            layer_top = bg_top - expansion
-            layer_right = bg_right + expansion
-            layer_bottom = bg_bottom + expansion
-            
-            overlay_draw.rectangle([layer_left, layer_top, layer_right, layer_bottom], fill=purple_color)
-        
-        # Composite the overlay onto the main image
-        img.paste(overlay, (0, 0), overlay)
-        draw = ImageDraw.Draw(img)  # Recreate draw object after compositing
+    # Step 1: Create glow mask - draw text in white on black background
+    glow_mask = Image.new('L', (width, height), 0)
+    mask_draw = ImageDraw.Draw(glow_mask)
     
-    # Step 3: Draw all text on top of the background
+    # Draw all text lines on the mask
     for line_coord in recommendation.line_coordinates:
-        x, y = line_coord.x, line_coord.y
-        line_text = line_coord.text
-        
-        current_x = x
-        for char in line_text:
-            draw.text((current_x, y), char, font=font, fill=(255, 255, 255))
-            
-            # Get character width to move to next position
-            char_bbox = draw.textbbox((current_x, y), char, font=font)
-            char_width = char_bbox[2] - char_bbox[0]
-            current_x += char_width
+        mask_draw.text((line_coord.x, line_coord.y), line_coord.text, font=font, fill=255)
+    
+    # Step 2: Apply multiple Gaussian blurs for strong purple glow effect
+    glow1 = glow_mask.filter(ImageFilter.GaussianBlur(radius=40))  # Wide glow
+    glow2 = glow_mask.filter(ImageFilter.GaussianBlur(radius=25))  # Medium glow
+    glow3 = glow_mask.filter(ImageFilter.GaussianBlur(radius=15))  # Tight glow
+    
+    # Step 3: Create bright purple glow color
+    purple_glow = Image.new('RGB', (width, height), (180, 60, 200))
+    
+    # Step 4: Apply each glow layer to the image (builds up intensity)
+    img.paste(purple_glow, (0, 0), glow1)  # Widest glow
+    img.paste(purple_glow, (0, 0), glow2)  # Medium glow (makes it stronger)
+    img.paste(purple_glow, (0, 0), glow3)  # Tight glow (adds more intensity)
+    
+    # Step 5: Draw white text on top of the purple glow
+    draw = ImageDraw.Draw(img)
+    text_color = (255, 255, 255)
+    
+    for line_coord in recommendation.line_coordinates:
+        draw.text((line_coord.x, line_coord.y), line_coord.text, font=font, fill=text_color)
     
     # Save result
     output = io.BytesIO()

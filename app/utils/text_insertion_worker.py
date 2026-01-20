@@ -5,7 +5,7 @@ import traceback
 from io import BytesIO
 from pathlib import Path
 from typing import Dict
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from app.utils.image_analysis import get_text_placement_recommendation
 from app.utils.upload_to_bucket import upload_file_object_to_s3
 
@@ -122,9 +122,9 @@ async def process_single_page_text(
                 
                 # Load font based on language
                 if language and language.lower() == "arabic":
-                    font_path = Path(__file__).resolve().parents[2] / "fonts" / "Playpen_Sans_Arabic" / "PlaypenSansArabic-Regular.ttf"
+                    font_path = Path(__file__).resolve().parents[2] / "fonts" / "Playpen_Sans_Arabic" / "PlaypenSansArabic-SemiBold.ttf"
                 else:
-                    font_path = Path(__file__).resolve().parents[2] / "fonts" / "Comic_Relief" / "ComicRelief-Regular.ttf"
+                    font_path = Path(__file__).resolve().parents[2] / "fonts" / "Comic_Relief" / "ComicRelief-Bold.ttf"
                 
                 try:
                     if font_path.exists():
@@ -136,20 +136,36 @@ async def process_single_page_text(
                     print(f"[Text Worker] Warning: Error loading font: {font_err}, using default font")
                     font = ImageFont.load_default()
                 
-                # Draw text with outline
-                outline_color = "black" if text_color.lower() == "white" else "white"
+                # Apply purple glow effect
+                width, height = img_with_text.size
+                
+                # Step 1: Create glow mask - draw text in white on black background
+                glow_mask = Image.new('L', (width, height), 0)
+                mask_draw = ImageDraw.Draw(glow_mask)
+                
+                # Draw all text lines on the mask
+                for line_coord in text_recommendation.line_coordinates:
+                    mask_draw.text((line_coord.x, line_coord.y), line_coord.text, font=font, fill=255)
+                
+                # Step 2: Apply multiple Gaussian blurs for strong purple glow effect
+                glow1 = glow_mask.filter(ImageFilter.GaussianBlur(radius=40))  # Wide glow
+                glow2 = glow_mask.filter(ImageFilter.GaussianBlur(radius=25))  # Medium glow
+                glow3 = glow_mask.filter(ImageFilter.GaussianBlur(radius=15))  # Tight glow
+                
+                # Step 3: Create bright purple glow color
+                purple_glow = Image.new('RGB', (width, height), (180, 60, 200))
+                
+                # Step 4: Apply each glow layer to the image (builds up intensity)
+                img_with_text.paste(purple_glow, (0, 0), glow1)  # Widest glow
+                img_with_text.paste(purple_glow, (0, 0), glow2)  # Medium glow (makes it stronger)
+                img_with_text.paste(purple_glow, (0, 0), glow3)  # Tight glow (adds more intensity)
+                
+                # Step 5: Draw white text on top of the purple glow
+                draw = ImageDraw.Draw(img_with_text)
+                text_color_final = (255, 255, 255)
                 
                 for line_coord in text_recommendation.line_coordinates:
-                    x, y = line_coord.x, line_coord.y
-                    line_text = line_coord.text
-                    
-                    # Draw outline
-                    for adj_x in range(-2, 3):
-                        for adj_y in range(-2, 3):
-                            draw.text((x + adj_x, y + adj_y), line_text, font=font, fill=outline_color)
-                    
-                    # Draw main text
-                    draw.text((x, y), line_text, font=font, fill=text_color)
+                    draw.text((line_coord.x, line_coord.y), line_coord.text, font=font, fill=text_color_final)
                 
                 text_was_added = True
                 print(f"[Text Worker] ✓ Successfully added {len(text_recommendation.line_coordinates)} lines of text to {page_key}")
