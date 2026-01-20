@@ -442,7 +442,12 @@ class GenerateImages:
                 """Generate a single page image"""
                 try:
                     # After cover is generated, use ONLY cover as reference (not original uploads)
-                    reference_for_this_page = [cover_page_bytes] if cover_page_bytes else reference_images_bytes_list
+                    if cover_page_bytes:
+                        reference_for_this_page = [cover_page_bytes]
+                        print(f"[Reference] Using cover page as reference for {page_key}")
+                    else:
+                        reference_for_this_page = reference_images_bytes_list
+                        print(f"[Reference] WARNING: No cover available, using original uploads for {page_key}")
                     
                     image_bytes, is_single_page = await asyncio.to_thread(
                         self._generate_single_image,
@@ -612,46 +617,64 @@ class GenerateImages:
         Returns: (image_bytes, is_single_page)"""
         try:
             # Enhance the prompt with detailed style and character instructions
-            if page_key == "page 0":
-                # Cover page - no text generation, composition only
+            page_num = self._get_page_number(page_key)
+            
+            # Determine page type and use appropriate prompt
+            if page_num == 0 or page_num == 14:
+                # Cover page (0) and back cover (14) - colorful single page illustrations
                 enhanced_prompt = f"""
 Children's storybook cover illustration in {image_style} style.
 Main character: {age}-year-old {gender} child matching the reference image exactly.
 {prompt}
 Composition with title space at top.
-Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
+Style: {image_style}, vibrant colors, high quality, child-friendly, whimsical and engaging.
 The child's face, features, hair, and appearance must exactly match the reference image provided.
 ABSOLUTELY NO TEXT, LETTERS, WORDS, TITLES, LABELS, OR ANY WRITTEN CHARACTERS IN THE IMAGE. Pure illustration only.
 """.strip()
-            else:
-                # Check if this is a coloring page (pages 12 or 13) or back cover (page 14)
-                page_num = self._get_page_number(page_key)
-                is_special_page = page_num == 12 or page_num == 13 or page_num == 14
-                
-                # For story pages (1-11), add character positioning instruction
-                # For coloring/back cover pages, skip the positioning instruction
-                if not is_special_page:
-                    # Story pages (1-11) - will be split into two pages
-                    enhanced_prompt = f"""
-Children's illustration in {image_style} style.
-Main character: {age}-year-old {gender} child matching the reference images exactly.
+            elif page_num == 12 or page_num == 13:
+                # Coloring pages (12, 13) - BLACK AND WHITE ONLY
+                enhanced_prompt = f"""
+BLACK AND WHITE COLORING PAGE ONLY - NO COLOR ALLOWED!
+
+MANDATORY COLORING PAGE REQUIREMENTS:
+- Pure black outlines on white background
+- NO COLOR, NO SHADING, NO GRAY TONES, NO GRADIENTS
+- Thick clear black lines only
+- All areas COMPLETELY WHITE/HOLLOW for coloring
+- {image_style} line art style, suitable for children to color with crayons
+
 {prompt}
-CRITICAL COMPOSITION: Position the character on the LEFT side OR RIGHT side of the image, NEVER in the center. Character should occupy one side of the scene.
-Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
-Maintain EXACT character appearance from reference images - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. Follow clothing colors and patterns from the prompt precisely.
-ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
-Negative prompt: No text, no centered character, no changes to character appearance, no dividing lines, no seams, no split effects.
+
+Main character: {age}-year-old {gender} child with features matching reference images.
+Style: {image_style} black and white line drawing, coloring book page, clear outlines, no fill, no shading.
+Character details: Match hair style, facial features from reference but ONLY as black outlines.
+
+CRITICAL: This MUST be a black and white coloring page in {image_style} style. Pure white areas for coloring. Black outlines only. NO colors, NO shading, NO fills.
+
+Negative prompt: No colors, no shading, no gradients, no gray tones, no fills, no painted areas, no colored sections, no realistic rendering, no text.
 """.strip()
-                else:
-                    # Coloring pages (12, 13) and back cover (14) - single page, no positioning needed
-                    enhanced_prompt = f"""
-Children's illustration in {image_style} style.
-Main character: {age}-year-old {gender} child matching the reference images exactly.
+            else:
+                # Story pages (1-11) - will be split into two pages
+                enhanced_prompt = f"""
+CRITICAL: CHARACTER MUST BE ON LEFT OR RIGHT SIDE ONLY - NEVER CENTER!
+
+POSITIONING RULES (MANDATORY):
+- Character positioned at 0-35% from LEFT edge OR 65-100% from LEFT edge (right side)
+- Character's face, body, and limbs must NOT cross the 40-60% center zone
+- FORBIDDEN: center position, middle placement, centered composition
+- REQUIRED: extreme left positioning OR extreme right positioning
+
+{image_style} style children's illustration.
+Main character: {age}-year-old {gender} child matching reference images exactly.
 {prompt}
-Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
+
+COMPOSITION REQUIREMENT: Character occupies FAR LEFT third of image OR FAR RIGHT third of image. Character positioned as far from center as possible.
+
+Style: {image_style}, vibrant colors, high quality, child-friendly, whimsical and engaging.
 Maintain EXACT character appearance from reference images - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. Follow clothing colors and patterns from the prompt precisely.
 ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
-Negative prompt: No text, no changes to character appearance.
+
+CRITICAL NEGATIVE PROMPT: No centered character, absolutely no middle positioning, no center composition, character must NOT be in image center (40-60% zone), no text, no changes to character appearance, no dividing lines, no seams, no split effects.
 """.strip()
             
             # Prepare headers
