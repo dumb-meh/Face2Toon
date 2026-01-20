@@ -374,6 +374,27 @@ class GenerateImages:
         cover_page_bytes = None
         remaining_pages = {}
         
+        # If page_0_url is provided (coverpage="yes"), load it to use as reference for all other pages
+        if page_0_url:
+            try:
+                # Extract filename from URL and read from local uploads folder
+                if page_0_url.startswith('http'):
+                    from urllib.parse import urlparse
+                    parsed = urlparse(page_0_url)
+                    file_path = parsed.path.lstrip('/')
+                else:
+                    file_path = page_0_url.lstrip('/')
+                
+                # Read the cover image to use as reference
+                if os.path.exists(file_path):
+                    with open(file_path, 'rb') as f:
+                        cover_page_bytes = f.read()
+                    print(f"[Cover Reference] Loaded existing cover image from {file_path} to use as reference for all pages")
+                else:
+                    print(f"Warning: Cover image not found at: {file_path}")
+            except Exception as e:
+                print(f"Error loading cover image for reference: {str(e)}")
+        
         # Separate cover from other pages
         for page_key, prompt in pages.items():
             if page_key == 'page 0':
@@ -420,17 +441,20 @@ class GenerateImages:
             async def generate_single_page(page_key, prompt, page_num_for_split):
                 """Generate a single page image"""
                 try:
+                    # After cover is generated, use ONLY cover as reference (not original uploads)
+                    reference_for_this_page = [cover_page_bytes] if cover_page_bytes else reference_images_bytes_list
+                    
                     image_bytes, is_single_page = await asyncio.to_thread(
                         self._generate_single_image,
                         prompt,
-                        reference_images_bytes_list,  # All pages use reference image
+                        reference_for_this_page,  # Use only cover after it's generated
                         None,  # No URL reference
                         gender,
                         age,
                         image_style,
                         page_key,
                         session_id,
-                        reference_page_bytes=cover_page_bytes,  # Use cover as style reference
+                        reference_page_bytes=None,  # Don't use style reference
                         page_number=page_num_for_split
                     )
                     return (page_key, image_bytes, page_num_for_split, is_single_page)
@@ -594,8 +618,8 @@ class GenerateImages:
 Children's storybook cover illustration in {image_style} style.
 Main character: {age}-year-old {gender} child matching the reference image exactly.
 {prompt}
-Composition suitable for a book cover with space for title text placement.
-Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
+Composition with title space at top.
+Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
 The child's face, features, hair, and appearance must exactly match the reference image provided.
 ABSOLUTELY NO TEXT, LETTERS, WORDS, TITLES, LABELS, OR ANY WRITTEN CHARACTERS IN THE IMAGE. Pure illustration only.
 """.strip()
@@ -606,16 +630,14 @@ ABSOLUTELY NO TEXT, LETTERS, WORDS, TITLES, LABELS, OR ANY WRITTEN CHARACTERS IN
                 
                 # Story pages - no text generation, image only
                 enhanced_prompt = f"""
-Children's storybook illustration in {image_style} style.
-Main character: {age}-year-old {gender} child continuing from the previous page.
+Children's illustration in {image_style} style.
+Main character: {age}-year-old {gender} child matching the reference images exactly.
 {prompt}
-Composition suitable for a children's storybook with space for text placement on the left side.
-CRITICAL COMPOSITION: This image will be split vertically down the middle into two pages. DO NOT place the character's face or any important facial features in the center of the image. Position the character primarily on the LEFT side or RIGHT side of the composition, never centered. Keep the character's face at least 25% away from the center vertical line to avoid splitting facial features. Background elements can span across, but the character should be clearly positioned to one side.
-Style: Professional children's book illustration, vibrant colors, high quality, storybook art, child-friendly, whimsical and engaging.
-CRITICAL: Maintain EXACT character appearance from the style reference - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. If clothing colors or patterns are specified in the prompt, follow them precisely without variation.
-Focus on: implementing the exact scene, actions, setting, and clothing details as described while preserving all character appearance characteristics.
-ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS ANYWHERE IN THE IMAGE. The image must be purely visual with no typography of any kind.
-Negative prompt: No text, no letters, no words, no signs, no labels, no captions, no written language, no typography, no alphabet characters, no numbers in text form. No changes to the character's face structure, facial proportions, eyebrow thickness or shape, eye color or shape, nose shape, mouth shape, hair color, hair style, or skin tone. Do not modify clothing colors from the prompt description. No artistic reinterpretation of the character's established appearance. Do not center the character's face in the middle of the image.
+CRITICAL COMPOSITION: This image will be split vertically down the middle. Position the character's face and body on the LEFT side OR RIGHT side of the composition, NEVER centered. Keep the character's face at least 30% away from the center vertical line.
+Style: Professional children's illustration, vibrant colors, high quality, child-friendly, whimsical and engaging.
+Maintain EXACT character appearance from reference images - same facial features, eyebrows, eye shape, nose, mouth, hair color, hair style, and skin tone. Follow clothing colors and patterns from the prompt precisely.
+ABSOLUTELY NO TEXT, LETTERS, WORDS, SIGNS, LABELS, CAPTIONS, OR ANY WRITTEN CHARACTERS IN THE IMAGE.
+Negative prompt: No text, no centered character face, no changes to character appearance.
 """.strip()
             
             # Prepare headers
