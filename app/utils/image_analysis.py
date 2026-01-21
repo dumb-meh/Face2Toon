@@ -111,25 +111,70 @@ This image will be split vertically in the middle (at x={img_width//2}) to creat
 Text to place: "{text}"
 Font size: {font_size}px
 Estimated line height: {int(text_height)}px
+Estimated text width per character: {int(avg_char_width)}px
 
-Rules:
-1. DO NOT place text over people's faces, bodies, or any animals/creatures
-2. Find an empty area (sky, background, plain surface) with good visibility
-3. Text must be on LEFT half (x: 100 to {img_width//2 - 150}) OR RIGHT half (x: {img_width//2 + 150} to {img_width - 100})
-4. Split text into 2-4 lines for readability
-5. All lines must have the SAME x coordinate (they stack vertically)
-6. Space lines {int(text_height + 10)}px apart vertically
-7. Include ALL words from the original text
+YOUR TASK: Carefully analyze the image content and find the BEST empty area to place text.
 
-Return ONLY valid JSON (no markdown):
+CRITICAL RULES FOR TEXT PLACEMENT:
+1. ANALYZE the image first - identify:
+   - Where are characters/people/animals located?
+   - Where are important objects (fish, toys, furniture, etc.)?
+   - Which areas are EMPTY (sky, walls, background, plain surfaces)?
+   - Which side (left or right) has MORE empty space?
+
+2. AVOID covering ANY important visual elements:
+   - NO text on faces, bodies, or limbs of people/characters
+   - NO text on animals, pets, or creatures
+   - NO text on important objects (toys, furniture, decorative items)
+   - NO text on action areas or focal points
+
+3. CHOOSE THE BEST SIDE dynamically:
+   - If LEFT side has more empty space → place text on LEFT
+   - If RIGHT side has more empty space → place text on RIGHT
+   - Prefer areas with plain backgrounds (sky, walls, empty floor)
+
+4. POSITIONING ZONES:
+   - LEFT side: x coordinate between 150 and {img_width//2 - 200}
+   - RIGHT side: x coordinate between {img_width//2 + 200} and {img_width - 150}
+   - DO NOT use the exact same x coordinate every time - adjust based on image content
+   - Y coordinates: Avoid top 15% and bottom 15% - use the middle 70% of the image
+   - Find the emptiest vertical region (top-middle, center, or bottom-middle)
+
+5. TEXT FORMATTING:
+   - Split text into 2-4 lines for readability
+   - All lines stack vertically with the SAME x coordinate
+   - Space lines {int(text_height + 10)}px apart vertically
+   - Ensure longest line fits within the chosen side
+
+6. DYNAMIC PLACEMENT:
+   - Adjust x position based on where empty space actually is
+   - If character is on far left, push text more to the center-left
+   - If character is on far right, push text more to the center-right
+   - If there's empty space at the top, place text higher (y starting around {img_height // 4})
+   - If there's empty space at the bottom, place text lower (y starting around {img_height * 2 // 3})
+
+EXAMPLE 1 - Character on left side, empty sky on right:
 {{
-    "side": "left" or "right",
-    "number_of_lines": <number>,
+    "side": "right",
+    "number_of_lines": 3,
     "lines": [
-        {{"line_number": 1, "text": "...", "x": <coord>, "y": <coord>}},
-        {{"line_number": 2, "text": "...", "x": <same x>, "y": <y + {int(text_height + 10)}>}}
+        {{"line_number": 1, "text": "First part of", "x": {img_width - 800}, "y": {img_height // 3}}},
+        {{"line_number": 2, "text": "the story text", "x": {img_width - 800}, "y": {img_height // 3 + int(text_height + 10)}}},
+        {{"line_number": 3, "text": "goes here", "x": {img_width - 800}, "y": {img_height // 3 + int((text_height + 10) * 2)}}}
     ]
-}}"""
+}}
+
+EXAMPLE 2 - Character on right side, empty area on left:
+{{
+    "side": "left",
+    "number_of_lines": 2,
+    "lines": [
+        {{"line_number": 1, "text": "Text placed in", "x": 400, "y": {img_height // 2 - 40}}},
+        {{"line_number": 2, "text": "empty left area", "x": 400, "y": {img_height // 2 + 40}}}
+    ]
+}}
+
+Return ONLY valid JSON with your analysis-based placement (no markdown, no explanations):"""
     
     try:
         response = client.models.generate_content(
@@ -157,17 +202,37 @@ Return ONLY valid JSON (no markdown):
         
         result = json.loads(result_text)
         
+        # Log the full parsed result to debug coordinate issues
+        print(f"[Gemini Vision] Parsed JSON result: {json.dumps(result, indent=2)}")
+        
         # Extract line coordinates
         lines = result.get("lines", [])
-        line_coordinates = [
-            LineCoordinate(
+        
+        if not lines:
+            raise Exception("Gemini Vision returned no line coordinates")
+        
+        # Validate that coordinates are present
+        line_coordinates = []
+        for idx, line in enumerate(lines):
+            if "x" not in line or "y" not in line:
+                print(f"[Gemini Vision] WARNING: Line {idx+1} missing coordinates! Line data: {line}")
+                raise Exception(f"Line {idx+1} is missing x or y coordinates in Gemini response")
+            
+            line_coordinates.append(LineCoordinate(
                 line_number=line.get("line_number", idx + 1),
                 text=line.get("text", ""),
-                x=line.get("x", 50),
-                y=line.get("y", 50 + idx * (font_size + 10))
-            )
-            for idx, line in enumerate(lines)
-        ]
+                x=line["x"],  # No default - fail if missing
+                y=line["y"]   # No default - fail if missing
+            ))
+        
+        # Validate coordinates are reasonable
+        for coord in line_coordinates:
+            if coord.x < 0 or coord.x > img_width or coord.y < 0 or coord.y > img_height:
+                print(f"[Gemini Vision] WARNING: Coordinate out of bounds: x={coord.x}, y={coord.y} (image: {img_width}x{img_height})")
+        
+        print(f"[Gemini Vision] Extracted {len(line_coordinates)} line coordinates:")
+        for coord in line_coordinates:
+            print(f"  Line {coord.line_number}: '{coord.text}' at ({coord.x}, {coord.y})")
         
         return TextPlacementRecommendation(
             number_of_lines=result.get("number_of_lines", len(lines)),

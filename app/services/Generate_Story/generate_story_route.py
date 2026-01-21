@@ -11,3 +11,14 @@ async def  get_generate_story(request: GenerateStoryRequest):
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+@router.post("/generate_story_batch", response_model=GenerateStoryResponse)
+async def  get_generate_story(request: GenerateStoryRequest):
+    try:
+        response = await generate_story.get_generate_story_batch(request.dict())
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
