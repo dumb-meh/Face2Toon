@@ -66,22 +66,53 @@ class GenerateImages:
                 ref_img.file.seek(0)
                 reference_images_bytes_list.append(img_bytes)
         
-        # Step 1: Generate ALL images in a single batch API call
-        print(f"\n[Step 1/4] Calling Seedream batch API to generate all {len(prompts)} images...")
-        image_urls_from_api = await asyncio.to_thread(
+        # Separate coloring pages from main batch (they confuse the model with black/white instructions)
+        main_prompts = {}
+        coloring_prompts = {}
+        for page_key, prompt in prompts.items():
+            page_num = self._get_page_number(page_key)
+            if page_num == 12 or page_num == 13:
+                coloring_prompts[page_key] = prompt
+            else:
+                main_prompts[page_key] = prompt
+        
+        print(f"\n[Strategy] Generating {len(main_prompts)} main pages and {len(coloring_prompts)} coloring pages separately")
+        
+        # Step 1: Generate main batch and coloring pages simultaneously
+        print(f"\n[Step 1/4] Starting parallel generation:")
+        print(f"  - Main batch: {len(main_prompts)} pages (cover, story, back cover)")
+        print(f"  - Coloring pages: {len(coloring_prompts)} pages")
+        
+        # Start both requests in parallel
+        main_task = asyncio.to_thread(
             self._generate_all_images_batch,
-            prompts,
+            main_prompts,
             reference_images_bytes_list,
             gender,
             age,
             image_style
         )
         
-        print(f"✓ Received {len(image_urls_from_api)} image URLs from batch API")
+        coloring_task = asyncio.to_thread(
+            self._generate_all_images_batch,
+            coloring_prompts,
+            reference_images_bytes_list,
+            gender,
+            age,
+            image_style
+        ) if coloring_prompts else None
         
-        # Step 2: Download and resize all images in parallel
-        print(f"\n[Step 2/4] Downloading and resizing {len(image_urls_from_api)} images...")
-        page_keys = list(prompts.keys())
+        # Wait for main batch first (we need it to proceed)
+        print(f"[Main Batch] Waiting for {len(main_prompts)} images...")
+        main_image_urls = await main_task
+        print(f"✓ Main batch complete: {len(main_image_urls)} images received")
+        
+        # Step 2: Download and resize main batch images (while coloring pages may still be generating)
+        print(f"\n[Step 2/4] Downloading and resizing main batch images...")
+        main_page_keys = list(main_prompts.keys())
+        # Step 2: Download and resize main batch images (while coloring pages may still be generating)
+        print(f"\n[Step 2/4] Downloading and resizing main batch images...")
+        main_page_keys = list(main_prompts.keys())
         
         async def download_and_resize(page_key, image_url):
             """Download and resize a single image"""
@@ -92,12 +123,32 @@ class GenerateImages:
             )
             return (page_key, image_bytes, is_single_page)
         
-        download_tasks = [
-            download_and_resize(page_keys[i], image_urls_from_api[i])
-            for i in range(len(image_urls_from_api))
+        # Download main batch
+        main_download_tasks = [
+            download_and_resize(main_page_keys[i], main_image_urls[i])
+            for i in range(len(main_image_urls))
         ]
-        download_results = await asyncio.gather(*download_tasks)
-        print(f"✓ Downloaded and resized all images")
+        main_download_results = await asyncio.gather(*main_download_tasks)
+        print(f"✓ Downloaded and resized main batch images")
+        
+        # Wait for coloring pages to complete
+        coloring_download_results = []
+        if coloring_task:
+            print(f"\n[Coloring Pages] Waiting for {len(coloring_prompts)} coloring pages...")
+            coloring_image_urls = await coloring_task
+            print(f"✓ Coloring pages complete: {len(coloring_image_urls)} images received")
+            
+            # Download coloring pages
+            coloring_page_keys = list(coloring_prompts.keys())
+            coloring_download_tasks = [
+                download_and_resize(coloring_page_keys[i], coloring_image_urls[i])
+                for i in range(len(coloring_image_urls))
+            ]
+            coloring_download_results = await asyncio.gather(*coloring_download_tasks)
+            print(f"✓ Downloaded and resized coloring pages")
+        
+        # Combine all download results
+        download_results = main_download_results + coloring_download_results
         
         # Step 3: Insert text and split images in parallel
         print(f"\n[Step 3/4] Inserting text and splitting images...")
@@ -127,7 +178,7 @@ class GenerateImages:
             task = asyncio.create_task(
                 process_single_page_text(
                     page_key, image_bytes, page_num_for_split, is_single_page,
-                    story or {}, 50, "white", 300, session_id,
+                    story or {}, 100, "white", 300, session_id,
                     True, book_uuid, language
                 )
             )
@@ -174,6 +225,9 @@ class GenerateImages:
             results_dict['full_image_urls']
         )
         
+        # Convert PageImageUrls objects to dictionaries for Pydantic validation
+        structured_urls_dicts = [page.model_dump() for page in structured_urls]
+        
         # Calculate and log total execution time
         end_time = time.time()
         elapsed_time = end_time - start_time
@@ -181,7 +235,7 @@ class GenerateImages:
         print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Total Execution Time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
         
-        return GenerateImageResponse(image_urls=structured_urls, pdf_url=pdf_url)
+        return GenerateImageResponse(image_urls=structured_urls_dicts, pdf_url=pdf_url)
     
     def _generate_all_images_batch(
         self,

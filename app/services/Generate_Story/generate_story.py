@@ -273,6 +273,7 @@ Return a JSON object with two fields:
      * If 'Extracted Visual Attributes' provided: Use those exact attributes (hair color, hair style, eye color, skin tone, clothing)
      * If NO extracted attributes: Define appearance based on Character Description, age, gender, and story theme
      * Include: full hair description, eye color, skin tone, outfit details, compelling cover scene
+     * CRITICAL: DO NOT include title space or text areas - the model will NOT generate any text. Pure illustration only.
      * This establishes the visual baseline for all subsequent pages
    
    - For story pages (1-11): Start with "{input_data['image_style']} style illustration showing the child..."
@@ -302,7 +303,7 @@ Example output structure:
     "page last page": ""
   }},
   "prompt": {{
-    "page 0": "{input_data['image_style']} style cover illustration showing a {input_data['age']}-year-old {input_data['gender']} child with brown curly hair, bright green eyes, and warm tan skin tone, wearing a blue and white striped adventure outfit. The child stands confidently with a compass in hand, surrounded by a whimsical forest setting with tall trees and colorful flowers. Vibrant, engaging cover composition with space for title at top.",
+    "page 0": "{input_data['image_style']} style cover illustration showing a {input_data['age']}-year-old {input_data['gender']} child with brown curly hair, bright green eyes, and warm tan skin tone, wearing a blue and white striped adventure outfit. The child stands confidently with a compass in hand, surrounded by a whimsical forest setting with tall trees and colorful flowers. Vibrant, engaging cover composition. ABSOLUTELY NO TEXT, LETTERS, WORDS, OR WRITTEN CHARACTERS IN THE IMAGE.",
     "page 1": "{input_data['image_style']} style illustration showing the child wearing a blue striped shirt and khaki shorts, positioned on the LEFT side of the scene, standing by the wooden front door of a red brick cottage. Morning sunlight streams through nearby trees. The child waves goodbye with a backpack slung over one shoulder.",
     "page 2": "{input_data['image_style']} style illustration showing the child wearing a green sweater, positioned on the RIGHT side of the scene, walking along a cobblestone path through the village. Quaint shops with colorful awnings line the street. The child looks curiously at a map in hand.",
     "page 12": "Black and white coloring page illustration of the child discovering a magical garden with large flowers and butterflies. Clear outlines show the child reaching toward a butterfly. Simple line drawing with black outlines only, pure white fill areas, suitable for children to color with crayons.",
