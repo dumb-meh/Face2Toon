@@ -163,10 +163,10 @@ Return a JSON object with three fields:
    - Once you define the character's appearance (hair color, hair style, eye color, skin tone), maintain it EXACTLY across ALL pages.
    - CRITICAL: ALL image prompts MUST include the image style "{input_data['image_style']}" at the beginning or within the first sentence
    - BE SPECIFIC about scenes: Instead of "window", specify "apartment window with city view" or "train window with countryside passing by". Instead of "door", specify "wooden front door of a cottage" or "glass door of a shop". Instead of "room", specify "child's bedroom with toys" or "kitchen with wooden table". Make locations and objects concrete and clear.
-   - For "page 0" (cover): Start with "{input_data['image_style']} style cover illustration showing the child from the reference image..." OR if no reference image "...showing a {input_data['age']}-year-old {input_data['gender']} child with [specify hair color, hair style, eye color, skin tone]...". Include compelling cover scene.
-   - For story pages (1-11): Start with "{input_data['image_style']} style illustration showing the child..." ALWAYS include: hair color, hair style, eye color, skin tone, and clothing (exact colors/patterns). Be very specific about: exact pose and body position (standing left side, sitting on right, reaching toward left), specific actions, detailed setting (type of room/location), background elements (what objects, where positioned), lighting and mood, and any other characters with their positions. CRITICAL: Explicitly state character position as "positioned on the LEFT side of the scene" or "positioned on the RIGHT side of the scene" - NEVER say centered or middle. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English.
+   - For "page 0" (cover): Start with "Children's book cover illustration in {input_data['image_style']} style showing the child from the reference image..." OR if no reference image "...showing a {input_data['age']}-year-old {input_data['gender']} child with [specify hair color, hair style, eye color, skin tone]...". Include compelling cover scene.
+   - For story pages (1-11): Start with "Children's book illustration in {input_data['image_style']} style showing the child..." ALWAYS include: hair color, hair style, eye color, skin tone, and clothing (exact colors/patterns). Be very specific about: exact pose and body position (standing left side, sitting on right, reaching toward left), specific actions, detailed setting (type of room/location), background elements (what objects, where positioned), lighting and mood, and any other characters with their positions. CRITICAL: Explicitly state character position as "positioned on the LEFT side of the scene" or "positioned on the RIGHT side of the scene" - NEVER say centered or middle. Maintain clothing consistency across pages. Each prompt: 4-6 detailed sentences in English.
    - For coloring pages (12-13): Start with "Black and white coloring page illustration..." (no style needed). CRITICAL COLORING PAGE REQUIREMENTS: Pure black outlines on white background, NO SHADING, NO GRAY TONES, NO GRADIENTS, NO FILL, completely hollow/empty areas for coloring, clear thick black lines only, simple line art. Describe a key scene with clear outlines and simple details. Still mention hair style, facial features for consistency. End with "Simple line drawing with black outlines only, pure white fill areas, no colors, no shading, no gradients, hollow colorable spaces, suitable for children to color with crayons or markers."
-   - For "page last page" (back cover): Start with "{input_data['image_style']} style back cover illustration showing the child..." Include hair color, hair style, eye color, skin tone. Describe a peaceful closing scene with specific character position (left or right side). 4-6 detailed sentences.
+   - For "page last page" (back cover): Start with "Children's book back cover illustration in {input_data['image_style']} style showing the child..." Include hair color, hair style, eye color, skin tone. Describe a peaceful closing scene with specific character position (left or right side). 4-6 detailed sentences.
 
 
 
@@ -179,10 +179,10 @@ Example output structure:
     "page last page": ""
   }},
   "prompt": {{
-    "page 0": "{input_data['image_style']} style cover illustration showing a {input_data['age']}-year-old {input_data['gender']} child with [brown curly hair, bright green eyes, warm tan skin tone] wearing...[detailed 4-6 sentence prompt]",
-    "page 1": "{input_data['image_style']} style illustration showing the child with brown curly hair, bright green eyes, and warm tan skin tone wearing a blue striped shirt and khaki shorts, positioned on the LEFT side of the scene...[detailed 4-6 sentence prompt with specific location like 'standing by the wooden front door of a red brick cottage']",
-    "page 2": "{input_data['image_style']} style illustration showing the child with brown curly hair, bright green eyes, and warm tan skin tone wearing a green sweater, positioned on the RIGHT side of the scene...[detailed prompt with specific details like 'looking through the large bay window of their living room at the sunset']",
-    "page last page": "{input_data['image_style']} style back cover illustration showing the child with brown curly hair, bright green eyes, and warm tan skin tone, positioned on the LEFT side...[detailed 4-6 sentence prompt]"
+    "page 0": "Children's book cover illustration in {input_data['image_style']} style showing a {input_data['age']}-year-old {input_data['gender']} child with [brown curly hair, bright green eyes, warm tan skin tone] wearing...[detailed 4-6 sentence prompt]",
+    "page 1": "Children's book illustration in {input_data['image_style']} style showing the child with brown curly hair, bright green eyes, and warm tan skin tone wearing a blue striped shirt and khaki shorts, positioned on the LEFT side of the scene...[detailed 4-6 sentence prompt with specific location like 'standing by the wooden front door of a red brick cottage']",
+    "page 2": "Children's book illustration in {input_data['image_style']} style showing the child with brown curly hair, bright green eyes, and warm tan skin tone wearing a green sweater, positioned on the RIGHT side of the scene...[detailed prompt with specific details like 'looking through the large bay window of their living room at the sunset']",
+    "page last page": "Children's book back cover illustration in {input_data['image_style']} style showing the child with brown curly hair, bright green eyes, and warm tan skin tone, positioned on the LEFT side...[detailed 4-6 sentence prompt]"
   }}
 
 }}
@@ -269,14 +269,14 @@ Return a JSON object with two fields:
    - CRITICAL: ALL image prompts MUST include the image style "{input_data['image_style']}" at the beginning or within the first sentence
    - BE SPECIFIC about scenes: Instead of "window", specify "apartment window with city view" or "train window with countryside passing by". Instead of "door", specify "wooden front door of a cottage" or "glass door of a shop". Instead of "room", specify "child's bedroom with toys" or "kitchen with wooden table". Make locations and objects concrete and clear.
    
-   - For "page 0" (cover): Establish the character's full appearance here. Start with "{input_data['image_style']} style cover illustration showing..."
+   - For "page 0" (cover): Establish the character's full appearance here. Start with "Children's book cover illustration in {input_data['image_style']} style showing..."
      * If 'Extracted Visual Attributes' provided: Use those exact attributes (hair color, hair style, eye color, skin tone, clothing)
      * If NO extracted attributes: Define appearance based on Character Description, age, gender, and story theme
      * Include: full hair description, eye color, skin tone, outfit details, compelling cover scene
      * CRITICAL: DO NOT include title space or text areas - the model will NOT generate any text. Pure illustration only.
      * This establishes the visual baseline for all subsequent pages
    
-   - For story pages (1-11): Start with "{input_data['image_style']} style illustration showing the child..."
+   - For story pages (1-11): Start with "Children's book illustration in {input_data['image_style']} style showing the child..."
      * Focus on: specific pose/action, clothing for this scene, detailed setting, background elements, lighting/mood
      * CRITICAL: Explicitly state character position as "positioned on the LEFT side of the scene" or "positioned on the RIGHT side of the scene" - NEVER say centered or middle
      * Since reference image + cover establish appearance, you can say "the child" without repeating full appearance details
@@ -288,7 +288,7 @@ Return a JSON object with two fields:
      * Describe key scene with clear, simple outlines suitable for children to color
      * End with "Simple line drawing with black outlines only, pure white fill areas, suitable for children to color with crayons."
    
-   - For "page last page" (back cover): Start with "{input_data['image_style']} style back cover illustration showing the child..."
+   - For "page last page" (back cover): Start with "Children's book back cover illustration in {input_data['image_style']} style showing the child..."
      * Peaceful closing scene with specific character position (left or right side)
      * Brief clothing mention, 3-4 sentences
 
@@ -303,11 +303,11 @@ Example output structure:
     "page last page": ""
   }},
   "prompt": {{
-    "page 0": "{input_data['image_style']} style cover illustration showing a {input_data['age']}-year-old {input_data['gender']} child with brown curly hair, bright green eyes, and warm tan skin tone, wearing a blue and white striped adventure outfit. The child stands confidently with a compass in hand, surrounded by a whimsical forest setting with tall trees and colorful flowers. Vibrant, engaging cover composition. ABSOLUTELY NO TEXT, LETTERS, WORDS, OR WRITTEN CHARACTERS IN THE IMAGE.",
-    "page 1": "{input_data['image_style']} style illustration showing the child wearing a blue striped shirt and khaki shorts, positioned on the LEFT side of the scene, standing by the wooden front door of a red brick cottage. Morning sunlight streams through nearby trees. The child waves goodbye with a backpack slung over one shoulder.",
-    "page 2": "{input_data['image_style']} style illustration showing the child wearing a green sweater, positioned on the RIGHT side of the scene, walking along a cobblestone path through the village. Quaint shops with colorful awnings line the street. The child looks curiously at a map in hand.",
+    "page 0": "Children's book cover illustration in {input_data['image_style']} style showing a {input_data['age']}-year-old {input_data['gender']} child with brown curly hair, bright green eyes, and warm tan skin tone, wearing a blue and white striped adventure outfit. The child stands confidently with a compass in hand, surrounded by a whimsical forest setting with tall trees and colorful flowers. Vibrant, engaging cover composition. ABSOLUTELY NO TEXT, LETTERS, WORDS, OR WRITTEN CHARACTERS IN THE IMAGE.",
+    "page 1": "Children's book illustration in {input_data['image_style']} style showing the child wearing a blue striped shirt and khaki shorts, positioned on the LEFT side of the scene, standing by the wooden front door of a red brick cottage. Morning sunlight streams through nearby trees. The child waves goodbye with a backpack slung over one shoulder.",
+    "page 2": "Children's book illustration in {input_data['image_style']} style showing the child wearing a green sweater, positioned on the RIGHT side of the scene, walking along a cobblestone path through the village. Quaint shops with colorful awnings line the street. The child looks curiously at a map in hand.",
     "page 12": "Black and white coloring page illustration of the child discovering a magical garden with large flowers and butterflies. Clear outlines show the child reaching toward a butterfly. Simple line drawing with black outlines only, pure white fill areas, suitable for children to color with crayons.",
-    "page last page": "{input_data['image_style']} style back cover illustration showing the child wearing the blue striped outfit, positioned on the LEFT side, sitting peacefully under a large oak tree at sunset. The child holds an open book, smiling contentedly. Warm, peaceful closing scene."
+    "page last page": "Children's book back cover illustration in {input_data['image_style']} style showing the child wearing the blue striped outfit, positioned on the LEFT side, sitting peacefully under a large oak tree at sunset. The child holds an open book, smiling contentedly. Warm, peaceful closing scene."
   }}
 }}
 

@@ -247,8 +247,21 @@ class GenerateImages:
     ) -> List[str]:
         """Generate ALL images in a single batch API call using Seedream sequential generation"""
         try:
-            # Convert prompts dict to JSON string for batch API
-            prompts_json = json.dumps(prompts)
+            # Add brief negative prompting to each prompt (keep short for batch processing)
+            enhanced_prompts = {}
+            for page_key, prompt in prompts.items():
+                page_num = self._get_page_number(page_key)
+                
+                # Add brief negative prompt based on page type
+                if page_num == 12 or page_num == 13:
+                    # Coloring pages - emphasize black and white only
+                    enhanced_prompts[page_key] = f"{prompt}\n\nNegative: realistic photo, colors, shading, gradients."
+                else:
+                    # Regular pages - prevent photorealism and text
+                    enhanced_prompts[page_key] = f"{prompt}\n\nNegative: realistic photo, photograph, text, letters, centered character."
+            
+            # Convert enhanced prompts dict to JSON string for batch API
+            prompts_json = json.dumps(enhanced_prompts)
             
             print(f"[Batch API] Preparing to generate {len(prompts)} images in single call")
             print(f"[Batch API] Model: {self.model}")

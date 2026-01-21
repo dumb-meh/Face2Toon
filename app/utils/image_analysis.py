@@ -115,30 +115,44 @@ Estimated text width per character: {int(avg_char_width)}px
 
 YOUR TASK: Carefully analyze the image content and find the BEST empty area to place text.
 
+🚨 ABSOLUTE #1 PRIORITY - NEVER COVER FACES! 🚨
+- Identify ALL faces (people, children, adults, animals) in the image
+- Text must NEVER overlap or come near any face (keep at least 300px away from faces)
+- If a face is at the top, place text at the BOTTOM
+- If a face is at the bottom, place text at the TOP
+- If a face is in the middle, place text in the OPPOSITE corner
+- This is NON-NEGOTIABLE - faces must always be clearly visible!
+
 CRITICAL RULES FOR TEXT PLACEMENT:
 1. ANALYZE the image first - identify:
-   - Where are characters/people/animals located?
+   - WHERE ARE THE FACES? (Most important - mark their positions)
+   - Where are characters/people/animals bodies located?
    - Where are important objects (fish, toys, furniture, etc.)?
    - Which areas are EMPTY (sky, walls, background, plain surfaces)?
-   - Which side (left or right) has MORE empty space?
+   - Which side (left or right) has MORE empty space WITHOUT faces?
 
 2. AVOID covering ANY important visual elements:
-   - NO text on faces, bodies, or limbs of people/characters
-   - NO text on animals, pets, or creatures
-   - NO text on important objects (toys, furniture, decorative items)
-   - NO text on action areas or focal points
+   - ❌ ABSOLUTELY NO TEXT ON OR NEAR FACES (300px minimum distance)
+   - ❌ NO text on heads, hair, or upper body of people/characters
+   - ❌ NO text on animals, pets, or creatures
+   - ❌ NO text on important objects (toys, furniture, decorative items)
+   - ❌ NO text on action areas or focal points
 
 3. CHOOSE THE BEST SIDE dynamically:
-   - If LEFT side has more empty space → place text on LEFT
-   - If RIGHT side has more empty space → place text on RIGHT
-   - Prefer areas with plain backgrounds (sky, walls, empty floor)
+   - First, identify where faces are located
+   - If faces are on LEFT → place text on RIGHT
+   - If faces are on RIGHT → place text on LEFT
+   - If faces are at TOP → place text at BOTTOM
+   - If faces are at BOTTOM → place text at TOP
+   - Prefer areas with plain backgrounds (sky, walls, empty floor, ceiling)
 
-4. POSITIONING ZONES:
+4. POSITIONING ZONES (but avoid faces first!):
    - LEFT side: x coordinate between 150 and {img_width//2 - 200}
    - RIGHT side: x coordinate between {img_width//2 + 200} and {img_width - 150}
-   - DO NOT use the exact same x coordinate every time - adjust based on image content
-   - Y coordinates: Avoid top 15% and bottom 15% - use the middle 70% of the image
-   - Find the emptiest vertical region (top-middle, center, or bottom-middle)
+   - DO NOT use the exact same x coordinate every time - adjust based on where faces are
+   - Y coordinates: Find empty vertical space away from faces
+   - Keep 300px minimum distance from any detected face
+   - If face is in upper half, place text in lower half (and vice versa)
 
 5. TEXT FORMATTING:
    - Split text into 2-4 lines for readability
@@ -146,12 +160,14 @@ CRITICAL RULES FOR TEXT PLACEMENT:
    - Space lines {int(text_height + 10)}px apart vertically
    - Ensure longest line fits within the chosen side
 
-6. DYNAMIC PLACEMENT:
-   - Adjust x position based on where empty space actually is
-   - If character is on far left, push text more to the center-left
-   - If character is on far right, push text more to the center-right
-   - If there's empty space at the top, place text higher (y starting around {img_height // 4})
-   - If there's empty space at the bottom, place text lower (y starting around {img_height * 2 // 3})
+6. DYNAMIC PLACEMENT (FACE-AWARE):
+   - First step: Locate ALL faces in the image
+   - Second step: Find the region with NO faces
+   - Third step: Place text in that face-free region
+   - If character is centered with face visible → place text at very top or very bottom
+   - If face is on left side → push text to far right
+   - If face is on right side → push text to far left
+   - Keep text positioned AWAY from faces - this is the most important requirement!
 
 EXAMPLE 1 - Character on left side, empty sky on right:
 {{
