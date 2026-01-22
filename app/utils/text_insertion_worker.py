@@ -209,17 +209,34 @@ async def process_single_page_text(
                 left_bytes.seek(0)
                 right_bytes.seek(0)
                 
-                # Upload splits with page_X.png naming
-                left_object_name = f"facetoon/{book_uuid}/splitted/page_{left_page_num}.png"
-                right_object_name = f"facetoon/{book_uuid}/splitted/page_{right_page_num}.png"
-                
-                left_result = upload_file_object_to_s3(left_bytes, object_name=left_object_name)
-                right_result = upload_file_object_to_s3(right_bytes, object_name=right_object_name)
-                
-                left_url = left_result.get('url') if left_result.get('success') else None
-                right_url = right_result.get('url') if right_result.get('success') else None
-                
-                print(f"[Text Worker] ✓ Split {page_key} -> page {left_page_num} (left), page {right_page_num} (right)")
+                # Only upload to S3 if upload_to_s3 flag is True, otherwise save locally
+                if upload_to_s3:
+                    # Upload splits with page_X.png naming
+                    left_object_name = f"facetoon/{book_uuid}/splitted/page_{left_page_num}.png"
+                    right_object_name = f"facetoon/{book_uuid}/splitted/page_{right_page_num}.png"
+                    
+                    left_result = upload_file_object_to_s3(left_bytes, object_name=left_object_name)
+                    right_result = upload_file_object_to_s3(right_bytes, object_name=right_object_name)
+                    
+                    left_url = left_result.get('url') if left_result.get('success') else None
+                    right_url = right_result.get('url') if right_result.get('success') else None
+                    
+                    print(f"[Text Worker] ✓ Split {page_key} uploaded to S3 -> page {left_page_num} (left), page {right_page_num} (right)")
+                else:
+                    # Save locally for first two pages generation
+                    os.makedirs('uploads/generated_images/splitted', exist_ok=True)
+                    left_filename = f"uploads/generated_images/splitted/{session_id}_page_{left_page_num}.png"
+                    right_filename = f"uploads/generated_images/splitted/{session_id}_page_{right_page_num}.png"
+                    
+                    left_img.save(left_filename, format='PNG')
+                    right_img.save(right_filename, format='PNG')
+                    
+                    base_url = os.getenv('domain') or os.getenv('BASE_URL')
+                    base_url = base_url.rstrip('/')
+                    left_url = f"{base_url}/{left_filename}"
+                    right_url = f"{base_url}/{right_filename}"
+                    
+                    print(f"[Text Worker] ✓ Split {page_key} saved locally -> page {left_page_num} (left), page {right_page_num} (right)")
                 
                 # Return structure for split pages with page numbers and bytes
                 return {

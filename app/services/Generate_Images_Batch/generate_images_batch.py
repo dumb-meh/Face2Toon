@@ -66,24 +66,87 @@ class GenerateImages:
                 ref_img.file.seek(0)
                 reference_images_bytes_list.append(img_bytes)
         
-        # Separate coloring pages from main batch (they confuse the model with black/white instructions)
+        # Handle coverpage="yes" - load existing cover and page 1, use them as references instead of original photo
+        pages_to_generate = prompts
+        
+        if coverpage.lower() == "yes":
+            print(f"\n[Coverpage Mode] Cover and page 1 already exist, will use them as references")
+            
+            # Filter out page 0 and page 1 from generation
+            pages_to_generate = {k: v for k, v in prompts.items() if k not in ['page 0', 'page 1']}
+            story_to_generate = {k: v for k, v in story.items() if k not in ['page 0', 'page 1']} if story else story
+            story = story_to_generate
+            
+            # IMPORTANT: Replace original child photo with page 0 and page 1 as references
+            reference_images_bytes_list = []
+            
+            # Load existing cover page image (page 0)
+            if page_0_url:
+                try:
+                    from urllib.parse import urlparse
+                    if page_0_url.startswith('http'):
+                        parsed = urlparse(page_0_url)
+                        file_path = parsed.path.lstrip('/')
+                    else:
+                        file_path = page_0_url.lstrip('/')
+                    
+                    if os.path.exists(file_path):
+                        with open(file_path, 'rb') as f:
+                            page_0_bytes = f.read()
+                        reference_images_bytes_list.append(page_0_bytes)
+                        print(f"[Coverpage Mode] Added page 0 as reference image")
+                    else:
+                        print(f"[Coverpage Mode] WARNING: Cover image not found at {file_path}")
+                except Exception as e:
+                    print(f"[Coverpage Mode] Error loading cover image: {str(e)}")
+            
+            # Load existing page 1 full image
+            if page_1_url:
+                try:
+                    from urllib.parse import urlparse
+                    if page_1_url.startswith('http'):
+                        parsed = urlparse(page_1_url)
+                        file_path = parsed.path.lstrip('/')
+                    else:
+                        file_path = page_1_url.lstrip('/')
+                    
+                    if os.path.exists(file_path):
+                        with open(file_path, 'rb') as f:
+                            page_1_bytes = f.read()
+                        reference_images_bytes_list.append(page_1_bytes)
+                        print(f"[Coverpage Mode] Added page 1 as reference image")
+                    else:
+                        print(f"[Coverpage Mode] WARNING: Page 1 image not found at {file_path}")
+                except Exception as e:
+                    print(f"[Coverpage Mode] Error loading page 1 image: {str(e)}")
+            
+            print(f"[Coverpage Mode] Using {len(reference_images_bytes_list)} reference images (page 0 and page 1)")
+        else:
+            print(f"\n[Full Generation Mode] Generating all {len(prompts)} pages, using {len(reference_images_bytes_list)} original child photo(s) as reference")
+        
+        # Separate coloring pages from main batch - they will be generated separately using single image method
         main_prompts = {}
         coloring_prompts = {}
-        for page_key, prompt in prompts.items():
+        for page_key, prompt in pages_to_generate.items():
             page_num = self._get_page_number(page_key)
             if page_num == 12 or page_num == 13:
                 coloring_prompts[page_key] = prompt
             else:
                 main_prompts[page_key] = prompt
         
-        print(f"\n[Strategy] Generating {len(main_prompts)} main pages and {len(coloring_prompts)} coloring pages separately")
+        print(f"\n[Strategy] Main batch: {len(main_prompts)} pages | Coloring pages: {len(coloring_prompts)} (will use single image generation)")
         
-        # Step 1: Generate main batch and coloring pages simultaneously
-        print(f"\n[Step 1/4] Starting parallel generation:")
-        print(f"  - Main batch: {len(main_prompts)} pages (cover, story, back cover)")
-        print(f"  - Coloring pages: {len(coloring_prompts)} pages")
+        # Step 1: Generate main batch only (no coloring pages in batch)
+        print(f"\n[Step 1/4] Generating main batch:")
+        print(f"  - Main batch: {len(main_prompts)} pages (cover/story/back cover)")
+        print(f"  - Coloring pages will be generated separately after main batch")
         
-        # Start both requests in parallel
+        # Step 1: Generate main batch only (no coloring pages in batch)
+        print(f"\n[Step 1/4] Generating main batch:")
+        print(f"  - Main batch: {len(main_prompts)} pages (cover/story/back cover)")
+        print(f"  - Coloring pages will be generated separately after main batch")
+        
+        # Generate only main batch
         main_task = asyncio.to_thread(
             self._generate_all_images_batch,
             main_prompts,
@@ -93,16 +156,7 @@ class GenerateImages:
             image_style
         )
         
-        coloring_task = asyncio.to_thread(
-            self._generate_all_images_batch,
-            coloring_prompts,
-            reference_images_bytes_list,
-            gender,
-            age,
-            image_style
-        ) if coloring_prompts else None
-        
-        # Wait for main batch first (we need it to proceed)
+        # Wait for main batch
         print(f"[Main Batch] Waiting for {len(main_prompts)} images...")
         main_image_urls = await main_task
         print(f"✓ Main batch complete: {len(main_image_urls)} images received")
@@ -131,21 +185,59 @@ class GenerateImages:
         main_download_results = await asyncio.gather(*main_download_tasks)
         print(f"✓ Downloaded and resized main batch images")
         
-        # Wait for coloring pages to complete
+        # Step 2.5: Generate coloring pages using single image method with only cover as reference
         coloring_download_results = []
-        if coloring_task:
-            print(f"\n[Coloring Pages] Waiting for {len(coloring_prompts)} coloring pages...")
-            coloring_image_urls = await coloring_task
-            print(f"✓ Coloring pages complete: {len(coloring_image_urls)} images received")
+        if coloring_prompts:
+            print(f"\n[Coloring Pages] Generating {len(coloring_prompts)} coloring pages using single image method...")
             
-            # Download coloring pages
-            coloring_page_keys = list(coloring_prompts.keys())
-            coloring_download_tasks = [
-                download_and_resize(coloring_page_keys[i], coloring_image_urls[i])
-                for i in range(len(coloring_image_urls))
+            # Get cover image bytes for reference
+            cover_ref_bytes = None
+            if coverpage.lower() == "yes" and page_0_url:
+                # Load from existing page 0
+                try:
+                    from urllib.parse import urlparse
+                    if page_0_url.startswith('http'):
+                        parsed = urlparse(page_0_url)
+                        file_path = parsed.path.lstrip('/')
+                    else:
+                        file_path = page_0_url.lstrip('/')
+                    
+                    if os.path.exists(file_path):
+                        with open(file_path, 'rb') as f:
+                            cover_ref_bytes = f.read()
+                        print(f"[Coloring Pages] Loaded existing cover as reference")
+                except Exception as e:
+                    print(f"[Coloring Pages] Error loading cover: {str(e)}")
+            else:
+                # Use first generated image (page 0) from main batch
+                if main_download_results and main_download_results[0][0] == 'page 0':
+                    cover_ref_bytes = main_download_results[0][1]
+                    print(f"[Coloring Pages] Using generated cover as reference")
+            
+            # Generate coloring pages in parallel using single image method
+            async def generate_single_coloring_page(page_key, prompt):
+                """Generate a single coloring page"""
+                try:
+                    image_bytes, is_single_page = await asyncio.to_thread(
+                        self._generate_single_image,
+                        prompt,
+                        [cover_ref_bytes] if cover_ref_bytes else [],
+                        gender,
+                        age,
+                        image_style,
+                        page_key
+                    )
+                    return (page_key, image_bytes, is_single_page)
+                except Exception as e:
+                    print(f"[Coloring Pages] Error generating {page_key}: {str(e)}")
+                    raise
+            
+            coloring_tasks = [
+                generate_single_coloring_page(page_key, prompt)
+                for page_key, prompt in coloring_prompts.items()
             ]
-            coloring_download_results = await asyncio.gather(*coloring_download_tasks)
-            print(f"✓ Downloaded and resized coloring pages")
+            coloring_download_results = await asyncio.gather(*coloring_tasks)
+            print(f"✓ Coloring pages generated: {len(coloring_download_results)} images")
         
         # Combine all download results
         download_results = main_download_results + coloring_download_results
@@ -160,8 +252,93 @@ class GenerateImages:
             'image_bytes': {}
         }
         
+        # If coverpage="yes", handle existing page 0 and page 1 first
+        if coverpage.lower() == "yes":
+            # Upload page 0 to S3 if exists
+            if page_0_url:
+                try:
+                    from urllib.parse import urlparse
+                    if page_0_url.startswith('http'):
+                        parsed = urlparse(page_0_url)
+                        file_path = parsed.path.lstrip('/')
+                    else:
+                        file_path = page_0_url.lstrip('/')
+                    
+                    if os.path.exists(file_path):
+                        with open(file_path, 'rb') as f:
+                            page_0_bytes = f.read()
+                        
+                        # Upload to S3
+                        page_0_object_name = f"facetoon/{book_uuid}/page_0.png"
+                        page_0_buffer = io.BytesIO(page_0_bytes)
+                        from app.utils.upload_to_bucket import upload_file_object_to_s3
+                        upload_result = upload_file_object_to_s3(page_0_buffer, object_name=page_0_object_name)
+                        
+                        if upload_result['success']:
+                            results_dict['image_urls']['page 0'] = upload_result['url']
+                            results_dict['full_image_urls']['page 0'] = upload_result['url']
+                            results_dict['image_bytes']['page 0'] = page_0_bytes
+                            print(f"[Coverpage Mode] Uploaded existing page 0 to S3")
+                except Exception as e:
+                    print(f"[Coverpage Mode] Error uploading page 0: {str(e)}")
+            
+            # Handle existing page 1 splits
+            if page_1_url:
+                try:
+                    from urllib.parse import urlparse
+                    from app.utils.upload_to_bucket import upload_file_object_to_s3
+                    
+                    if page_1_url.startswith('http'):
+                        parsed = urlparse(page_1_url)
+                        file_path = parsed.path.lstrip('/')
+                    else:
+                        file_path = page_1_url.lstrip('/')
+                    
+                    filename = os.path.basename(file_path)
+                    split_session_id = filename.replace('_image_1.png', '')
+                    
+                    left_filename = f"uploads/generated_images/splitted/{split_session_id}_page_1.png"
+                    right_filename = f"uploads/generated_images/splitted/{split_session_id}_page_2.png"
+                    
+                    if os.path.exists(left_filename) and os.path.exists(right_filename):
+                        # Read split images
+                        with open(left_filename, 'rb') as f:
+                            left_bytes = f.read()
+                        with open(right_filename, 'rb') as f:
+                            right_bytes = f.read()
+                        
+                        # Upload splits to S3
+                        left_object = f"facetoon/{book_uuid}/splitted/page_1.png"
+                        right_object = f"facetoon/{book_uuid}/splitted/page_2.png"
+                        
+                        left_buffer = io.BytesIO(left_bytes)
+                        right_buffer = io.BytesIO(right_bytes)
+                        
+                        left_result = upload_file_object_to_s3(left_buffer, object_name=left_object)
+                        right_result = upload_file_object_to_s3(right_buffer, object_name=right_object)
+                        
+                        if left_result['success'] and right_result['success']:
+                            results_dict['image_urls']['page 1'] = left_result['url']
+                            results_dict['image_urls']['page 2'] = right_result['url']
+                            results_dict['image_bytes']['page 1'] = left_bytes
+                            results_dict['image_bytes']['page 2'] = right_bytes
+                            
+                            # Also read full image for full_image_urls
+                            if os.path.exists(file_path):
+                                with open(file_path, 'rb') as f:
+                                    full_bytes = f.read()
+                                full_object = f"facetoon/{book_uuid}/full/image_1.png"
+                                full_buffer = io.BytesIO(full_bytes)
+                                full_result = upload_file_object_to_s3(full_buffer, object_name=full_object)
+                                if full_result['success']:
+                                    results_dict['full_image_urls']['page 1'] = full_result['url']
+                            
+                            print(f"[Coverpage Mode] Uploaded existing page 1 splits to S3")
+                except Exception as e:
+                    print(f"[Coverpage Mode] Error uploading page 1: {str(e)}")
+        
         text_tasks = []
-        page_counter = 0
+        page_counter = 0 if coverpage.lower() != "yes" else 1  # Start at 1 if skipping page 0 and page 1
         for page_key, image_bytes, is_single_page in download_results:
             page_num = self._get_page_number(page_key)
             is_coloring_page = page_num == 12 or page_num == 13
@@ -252,13 +429,13 @@ class GenerateImages:
             for page_key, prompt in prompts.items():
                 page_num = self._get_page_number(page_key)
                 
-                # Add brief negative prompt based on page type
+                # Add age, gender, and brief negative prompt based on page type
                 if page_num == 12 or page_num == 13:
                     # Coloring pages - emphasize black and white only
-                    enhanced_prompts[page_key] = f"{prompt}\n\nNegative: realistic photo, colors, shading, gradients."
+                    enhanced_prompts[page_key] = f"{prompt}\n\nMain character: {age}-year-old {gender} child matching reference image exactly.\n\nNegative: realistic photo, colors, shading, gradients."
                 else:
                     # Regular pages - prevent photorealism and text
-                    enhanced_prompts[page_key] = f"{prompt}\n\nNegative: realistic photo, photograph, text, letters, centered character."
+                    enhanced_prompts[page_key] = f"{prompt}\n\nMain character: {age}-year-old {gender} child matching reference image exactly.\n\nNegative: realistic photo, photograph, text, letters, centered character, gender change, must be {gender}."
             
             # Convert enhanced prompts dict to JSON string for batch API
             prompts_json = json.dumps(enhanced_prompts)
@@ -329,6 +506,77 @@ class GenerateImages:
             
         except Exception as e:
             print(f"[Batch API] Error during batch generation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    def _generate_single_image(
+        self,
+        prompt: str,
+        reference_images_bytes: List[bytes],
+        gender: str,
+        age: int,
+        image_style: str,
+        page_key: str
+    ) -> tuple[bytes, bool]:
+        """Generate a single coloring page using SeeDream API (not batch method)"""
+        try:
+            print(f"[Single Image] Generating {page_key}...")
+            
+            # Prepare headers
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Add negative prompt for coloring pages
+            enhanced_prompt = f"{prompt}\n\nNegative: realistic photo, colors, shading, gradients."
+            
+            # Prepare payload - coloring pages are square
+            payload = {
+                'model': self.model,
+                'prompt': enhanced_prompt,
+                'width': 2550,
+                'height': 2550,
+                'watermark': False
+            }
+            
+            # Add reference image (only cover)
+            if reference_images_bytes and len(reference_images_bytes) > 0:
+                img_base64 = base64.b64encode(reference_images_bytes[0]).decode('utf-8')
+                payload['reference_image'] = img_base64
+            
+            print(f"[Single Image] Sending request for {page_key}...")
+            
+            # Call SeeDream API
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=120
+            )
+            
+            if response.status_code != 200:
+                print(f"[Single Image] ERROR - Status Code: {response.status_code}")
+                print(f"[Single Image] Response: {response.text}")
+                response.raise_for_status()
+            
+            result = response.json()
+            
+            # Extract image URL
+            image_url = result.get('data', [{}])[0].get('url') or result.get('image_url') or result.get('url')
+            
+            if not image_url:
+                raise Exception(f"No image URL in response: {result}")
+            
+            # Download and resize image
+            image_bytes, is_single_page = resize_image_to_print_size(image_url, page_key)
+            
+            print(f"[Single Image] ✓ {page_key} generated successfully")
+            return image_bytes, is_single_page
+            
+        except Exception as e:
+            print(f"[Single Image] Error generating {page_key}: {str(e)}")
             import traceback
             traceback.print_exc()
             raise
