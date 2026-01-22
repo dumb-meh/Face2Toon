@@ -7,7 +7,7 @@ from app.services.Regenerate_Image.regenerate_image_route import router as regen
 from app.services.Create_Character.create_character_route import router as create_character_router
 from app.services.Swap_Character.swap_character_route import router as swap_character_router
 from app.services.Swap_Story_Information.swap_story_information_route import router as swap_story_information_router
-from test.test_generate_image import router as test_generate_batch_router
+# from test.test_generate_image import router as test_generate_batch_router
 from app.services.Generate_Images_Batch.generate_images_batch_route import router as generate_images_batch_router
 from app.utils import image_analysis as image_analysis_module
 import os
@@ -55,7 +55,7 @@ app.include_router(image_analysis_module.router, prefix="/api/v1")
 app.include_router(create_character_router, prefix="/api/v1")
 app.include_router(swap_character_router, prefix="/api/v1")
 app.include_router(swap_story_information_router, prefix="/api/v1")
-app.include_router(test_generate_batch_router, prefix="/api/v1", tags=["Test - Batch Generation"])
+# app.include_router(test_generate_batch_router, prefix="/api/v1", tags=["Test - Batch Generation"])
 app.include_router(generate_images_batch_router, prefix="/api/v1", tags=["Batch Image Generation"])
 
 async def cleanup_old_files():
