@@ -424,18 +424,18 @@ class GenerateImages:
     ) -> List[str]:
         """Generate ALL images in a single batch API call using Seedream sequential generation"""
         try:
-            # Add brief negative prompting to each prompt (keep short for batch processing)
+            # Add age, gender, and brief negative prompting to each prompt (keep short for batch processing)
             enhanced_prompts = {}
             for page_key, prompt in prompts.items():
                 page_num = self._get_page_number(page_key)
                 
-                # Add age, gender, and brief negative prompt based on page type
+                # Add age, gender, and strict character matching instructions
                 if page_num == 12 or page_num == 13:
                     # Coloring pages - emphasize black and white only
-                    enhanced_prompts[page_key] = f"{prompt}\n\nMain character: {age}-year-old {gender} child matching reference image exactly.\n\nNegative: realistic photo, colors, shading, gradients."
+                    enhanced_prompts[page_key] = f"{prompt}\n\nCRITICAL: {age}-year-old {gender} child. EXACT appearance from reference image - same hair style, hair length, hair color, facial features, face shape. Child from reference image ONLY.\n\nNegative: realistic photo, colors, shading, gradients, different hairstyle, hair length change, gender change, feminine features for boys, masculine features for girls."
                 else:
-                    # Regular pages - prevent photorealism and text
-                    enhanced_prompts[page_key] = f"{prompt}\n\nMain character: {age}-year-old {gender} child matching reference image exactly.\n\nNegative: realistic photo, photograph, text, letters, centered character, gender change, must be {gender}."
+                    # Regular pages - prevent photorealism, text, and appearance changes
+                    enhanced_prompts[page_key] = f"{prompt}\n\nCRITICAL: {age}-year-old {gender} child. EXACT appearance from reference image - same hair style, hair length, hair color, facial features, eyebrows, eye shape, face shape. Match reference image EXACTLY.\n\nNegative: realistic photo, photograph, text, letters, centered character, gender change, different hairstyle, hair length change, feminine look for boys, masculine look for girls, must maintain {gender} appearance from reference."
             
             # Convert enhanced prompts dict to JSON string for batch API
             prompts_json = json.dumps(enhanced_prompts)
@@ -529,8 +529,8 @@ class GenerateImages:
                 'Content-Type': 'application/json'
             }
             
-            # Add negative prompt for coloring pages
-            enhanced_prompt = f"{prompt}\n\nNegative: realistic photo, colors, shading, gradients."
+            # Add negative prompt for coloring pages with strict character matching
+            enhanced_prompt = f"{prompt}\n\nCRITICAL: {age}-year-old {gender} child. EXACT appearance from reference image - same hair style, hair length, hair color, facial features, face shape. Child from reference image ONLY.\n\nNegative: realistic photo, colors, shading, gradients, different hairstyle, hair length change, gender change, feminine features for boys, masculine features for girls."
             
             # Prepare payload - coloring pages are square
             payload = {
